@@ -9,6 +9,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/openservicemesh/osm/pkg/announcements"
 	"github.com/openservicemesh/osm/pkg/certificate"
 	"github.com/openservicemesh/osm/pkg/certificate/rotor"
 )
@@ -89,6 +90,12 @@ func (cm *CertManager) issue(cn certificate.CommonName, validityPeriod time.Dura
 	return cert, nil
 }
 
+func (cm *CertManager) deleteFromCache(cn certificate.CommonName) {
+	cm.cacheLock.Lock()
+	delete(*cm.cache, cn)
+	cm.cacheLock.Unlock()
+}
+
 func (cm *CertManager) getFromCache(cn certificate.CommonName) certificate.Certificater {
 	cm.cacheLock.Lock()
 	defer cm.cacheLock.Unlock()
@@ -125,6 +132,11 @@ func (cm *CertManager) IssueCertificate(cn certificate.CommonName, validityPerio
 	return cert, nil
 }
 
+// ReleaseCertificate is called when a cert will no longer be needed and should be removed from the system.
+func (cm *CertManager) ReleaseCertificate(cn certificate.CommonName) {
+	cm.deleteFromCache(cn)
+}
+
 // GetCertificate returns a certificate given its Common Name (CN)
 func (cm *CertManager) GetCertificate(cn certificate.CommonName) (certificate.Certificater, error) {
 	if cert := cm.getFromCache(cn); cert != nil {
@@ -147,7 +159,7 @@ func (cm *CertManager) RotateCertificate(cn certificate.CommonName) (certificate
 	cm.cacheLock.Lock()
 	(*cm.cache)[cn] = cert
 	cm.cacheLock.Unlock()
-	cm.announcements <- nil
+	cm.announcements <- announcements.Announcement{}
 
 	log.Info().Msgf("Rotating certificate CN=%s took %+v", cn, time.Since(start))
 
@@ -171,6 +183,6 @@ func (cm *CertManager) GetRootCertificate() (certificate.Certificater, error) {
 }
 
 // GetAnnouncementsChannel implements certificate.Manager and returns the channel on which the certificate manager announces changes made to certificates.
-func (cm *CertManager) GetAnnouncementsChannel() <-chan interface{} {
+func (cm *CertManager) GetAnnouncementsChannel() <-chan announcements.Announcement {
 	return cm.announcements
 }

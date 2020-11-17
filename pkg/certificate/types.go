@@ -3,6 +3,7 @@ package certificate
 import (
 	"time"
 
+	"github.com/openservicemesh/osm/pkg/announcements"
 	"github.com/openservicemesh/osm/pkg/logger"
 )
 
@@ -61,8 +62,12 @@ type Manager interface {
 	// ListCertificates lists all certificates issued
 	ListCertificates() ([]Certificater, error)
 
+	// ReleaseCertificate informs the underlying certificate issuer that the given cert will no longer be needed.
+	// This method could be called when a given payload is terminated. Calling this should remove certs from cache and free memory if possible.
+	ReleaseCertificate(CommonName)
+
 	// GetAnnouncementsChannel returns a channel, which is used to announce when changes have been made to the issued certificates.
-	GetAnnouncementsChannel() <-chan interface{}
+	GetAnnouncementsChannel() <-chan announcements.Announcement
 }
 
 var (

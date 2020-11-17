@@ -10,12 +10,15 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	testclient "k8s.io/client-go/kubernetes/fake"
+
+	"github.com/openservicemesh/osm/pkg/announcements"
 )
 
 var _ = Describe("Test Envoy configuration creation", func() {
 	testErrorEnvoyLogLevel := "error"
+	//noling: goconst
 	defaultConfigMap := map[string]string{
-		permissiveTrafficPolicyModeKey: "false",
+		PermissiveTrafficPolicyModeKey: "false",
 		egressKey:                      "true",
 		enableDebugServer:              "true",
 		prometheusScrapingKey:          "true",
@@ -39,9 +42,11 @@ var _ = Describe("Test Envoy configuration creation", func() {
 	Context("create OSM config with default values", func() {
 		kubeClient := testclient.NewSimpleClientset()
 		stop := make(chan struct{})
-		osmNamespace := "-test-osm-namespace-"
-		osmConfigMapName := "-test-osm-config-map-"
 		cfg := NewConfigurator(kubeClient, stop, osmNamespace, osmConfigMapName)
+		confChannel := cfg.Subscribe(
+			announcements.ConfigMapAdded,
+			announcements.ConfigMapDeleted,
+			announcements.ConfigMapUpdated)
 
 		It("test GetConfigMap", func() {
 			configMap := v1.ConfigMap{
@@ -54,7 +59,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 			_, err := kubeClient.CoreV1().ConfigMaps(osmNamespace).Create(context.TODO(), &configMap, metav1.CreateOptions{})
 			Expect(err).ToNot(HaveOccurred())
 
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			expectedConfig := &osmConfig{
 				PermissiveTrafficPolicyMode: false,
@@ -77,13 +82,15 @@ var _ = Describe("Test Envoy configuration creation", func() {
 	Context("create OSM config for permissive_traffic_policy_mode", func() {
 		kubeClient := testclient.NewSimpleClientset()
 		stop := make(chan struct{})
-		osmNamespace := "-test-osm-namespace-"
-		osmConfigMapName := "-test-osm-config-map-"
 		cfg := NewConfigurator(kubeClient, stop, osmNamespace, osmConfigMapName)
+		confChannel := cfg.Subscribe(
+			announcements.ConfigMapAdded,
+			announcements.ConfigMapDeleted,
+			announcements.ConfigMapUpdated)
 
 		It("correctly identifies that permissive_traffic_policy_mode is enabled", func() {
 			Expect(cfg.IsPermissiveTrafficPolicyMode()).To(BeFalse())
-			defaultConfigMap[permissiveTrafficPolicyModeKey] = "true"
+			defaultConfigMap[PermissiveTrafficPolicyModeKey] = "true"
 			configMap := v1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: osmNamespace,
@@ -96,7 +103,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -105,7 +112,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 		})
 
 		It("correctly identifies that permissive_traffic_policy_mode is disabled", func() {
-			defaultConfigMap[permissiveTrafficPolicyModeKey] = "false"
+			defaultConfigMap[PermissiveTrafficPolicyModeKey] = "false" //nolint: goconst
 			configMap := v1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: osmNamespace,
@@ -118,7 +125,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -130,9 +137,11 @@ var _ = Describe("Test Envoy configuration creation", func() {
 	Context("create OSM config for egress", func() {
 		kubeClient := testclient.NewSimpleClientset()
 		stop := make(chan struct{})
-		osmNamespace := "-test-osm-namespace-"
-		osmConfigMapName := "-test-osm-config-map-"
 		cfg := NewConfigurator(kubeClient, stop, osmNamespace, osmConfigMapName)
+		confChannel := cfg.Subscribe(
+			announcements.ConfigMapAdded,
+			announcements.ConfigMapDeleted,
+			announcements.ConfigMapUpdated)
 
 		It("correctly identifies that egress is enabled", func() {
 			Expect(cfg.IsEgressEnabled()).To(BeFalse())
@@ -148,7 +157,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -170,7 +179,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -182,9 +191,11 @@ var _ = Describe("Test Envoy configuration creation", func() {
 	Context("create OSM config for osm debug HTTP server", func() {
 		kubeClient := testclient.NewSimpleClientset()
 		stop := make(chan struct{})
-		osmNamespace := "-test-osm-namespace-"
-		osmConfigMapName := "-test-osm-config-map-"
 		cfg := NewConfigurator(kubeClient, stop, osmNamespace, osmConfigMapName)
+		confChannel := cfg.Subscribe(
+			announcements.ConfigMapAdded,
+			announcements.ConfigMapDeleted,
+			announcements.ConfigMapUpdated)
 
 		It("correctly identifies that the debug server is enabled", func() {
 			Expect(cfg.IsDebugServerEnabled()).To(BeFalse())
@@ -200,7 +211,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -212,9 +223,11 @@ var _ = Describe("Test Envoy configuration creation", func() {
 	Context("create OSM config for Prometheus scraping", func() {
 		kubeClient := testclient.NewSimpleClientset()
 		stop := make(chan struct{})
-		osmNamespace := "-test-osm-namespace-"
-		osmConfigMapName := "-test-osm-config-map-"
 		cfg := NewConfigurator(kubeClient, stop, osmNamespace, osmConfigMapName)
+		confChannel := cfg.Subscribe(
+			announcements.ConfigMapAdded,
+			announcements.ConfigMapDeleted,
+			announcements.ConfigMapUpdated)
 
 		It("correctly identifies that the config is enabled", func() {
 			Expect(cfg.IsPrometheusScrapingEnabled()).To(BeFalse())
@@ -230,7 +243,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -252,7 +265,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -264,9 +277,11 @@ var _ = Describe("Test Envoy configuration creation", func() {
 	Context("create OSM config for tracing", func() {
 		kubeClient := testclient.NewSimpleClientset()
 		stop := make(chan struct{})
-		osmNamespace := "-test-osm-namespace-"
-		osmConfigMapName := "-test-osm-config-map-"
 		cfg := NewConfigurator(kubeClient, stop, osmNamespace, osmConfigMapName)
+		confChannel := cfg.Subscribe(
+			announcements.ConfigMapAdded,
+			announcements.ConfigMapDeleted,
+			announcements.ConfigMapUpdated)
 
 		It("correctly identifies that the config is enabled", func() {
 			Expect(cfg.IsTracingEnabled()).To(BeFalse())
@@ -282,7 +297,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -304,7 +319,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -316,11 +331,13 @@ var _ = Describe("Test Envoy configuration creation", func() {
 	Context("create OSM config for the Envoy proxy log level", func() {
 		kubeClient := testclient.NewSimpleClientset()
 		stop := make(chan struct{})
-		osmNamespace := "-test-osm-namespace-"
-		osmConfigMapName := "-test-osm-config-map-"
 		testInfoEnvoyLogLevel := "info"
 		testDebugEnvoyLogLevel := "debug"
 		cfg := NewConfigurator(kubeClient, stop, osmNamespace, osmConfigMapName)
+		confChannel := cfg.Subscribe(
+			announcements.ConfigMapAdded,
+			announcements.ConfigMapDeleted,
+			announcements.ConfigMapUpdated)
 
 		It("correctly identifies that the Envoy log level is error", func() {
 			Expect(cfg.GetEnvoyLogLevel()).To(Equal(testErrorEnvoyLogLevel))
@@ -336,7 +353,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -358,8 +375,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
-
+			<-confChannel
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
 
@@ -380,7 +396,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 
 			// Wait for the config map change to propagate to the cache.
 			log.Info().Msg("Waiting for announcement")
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetOSMNamespace()).To(Equal(osmNamespace))
 			Expect(err).ToNot(HaveOccurred())
@@ -392,9 +408,11 @@ var _ = Describe("Test Envoy configuration creation", func() {
 	Context("create OSM config service cert validity period", func() {
 		kubeClient := testclient.NewSimpleClientset()
 		stop := make(chan struct{})
-		osmNamespace := "-test-osm-namespace-"
-		osmConfigMapName := "-test-osm-config-map-"
 		cfg := NewConfigurator(kubeClient, stop, osmNamespace, osmConfigMapName)
+		confChannel := cfg.Subscribe(
+			announcements.ConfigMapAdded,
+			announcements.ConfigMapDeleted,
+			announcements.ConfigMapUpdated)
 
 		It("correctly retrieves the default service cert validity duration when an invalid value is specified", func() {
 			defaultConfigMap[serviceCertValidityDurationKey] = "5" // no units, so invalid
@@ -408,7 +426,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 			_, err := kubeClient.CoreV1().ConfigMaps(osmNamespace).Create(context.TODO(), &configMap, metav1.CreateOptions{})
 			Expect(err).ToNot(HaveOccurred())
 
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetServiceCertValidityPeriod()).To(Equal(time.Duration(24 * time.Hour)))
 		})
@@ -425,7 +443,7 @@ var _ = Describe("Test Envoy configuration creation", func() {
 			_, err := kubeClient.CoreV1().ConfigMaps(osmNamespace).Update(context.TODO(), &configMap, metav1.UpdateOptions{})
 			Expect(err).ToNot(HaveOccurred())
 
-			<-cfg.GetAnnouncementsChannel()
+			<-confChannel
 
 			Expect(cfg.GetServiceCertValidityPeriod()).To(Equal(time.Duration(1 * time.Hour)))
 		})

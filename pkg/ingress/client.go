@@ -8,6 +8,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/openservicemesh/osm/pkg/announcements"
 	"github.com/openservicemesh/osm/pkg/configurator"
 	k8s "github.com/openservicemesh/osm/pkg/kubernetes"
 	"github.com/openservicemesh/osm/pkg/service"
@@ -22,7 +23,7 @@ func NewIngressClient(kubeClient kubernetes.Interface, kubeController k8s.Contro
 		informer:       informer,
 		cache:          informer.GetStore(),
 		cacheSynced:    make(chan interface{}),
-		announcements:  make(chan interface{}),
+		announcements:  make(chan announcements.Announcement),
 		kubeController: kubeController,
 	}
 
@@ -30,7 +31,13 @@ func NewIngressClient(kubeClient kubernetes.Interface, kubeController k8s.Contro
 		ns := reflect.ValueOf(obj).Elem().FieldByName("ObjectMeta").FieldByName("Namespace").String()
 		return kubeController.IsMonitoredNamespace(ns)
 	}
-	informer.AddEventHandler(k8s.GetKubernetesEventHandlers("Ingress", "Kubernetes", client.announcements, shouldObserve))
+
+	ingrEventTypes := k8s.EventTypes{
+		Add:    announcements.IngressAdded,
+		Update: announcements.IngressUpdated,
+		Delete: announcements.IngressDeleted,
+	}
+	informer.AddEventHandler(k8s.GetKubernetesEventHandlers("Ingress", "Kubernetes", client.announcements, shouldObserve, nil, ingrEventTypes))
 
 	if err := client.run(stop); err != nil {
 		log.Error().Err(err).Msg("Could not start Kubernetes Ingress client")
@@ -62,7 +69,7 @@ func (c *Client) run(stop <-chan struct{}) error {
 }
 
 // GetAnnouncementsChannel returns the announcement channel for the Ingress client
-func (c Client) GetAnnouncementsChannel() <-chan interface{} {
+func (c Client) GetAnnouncementsChannel() <-chan announcements.Announcement {
 	return c.announcements
 }
 

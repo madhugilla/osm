@@ -3,16 +3,20 @@ package tresor
 import (
 	"time"
 
+	"github.com/openservicemesh/osm/pkg/announcements"
 	"github.com/openservicemesh/osm/pkg/certificate"
 	"github.com/openservicemesh/osm/pkg/certificate/pem"
 	"github.com/openservicemesh/osm/pkg/configurator"
+)
+
+const (
+	rootCertOrganization = "Open Service Mesh Tresor"
 )
 
 // NewFakeCertManager creates a fake CertManager used for testing.
 func NewFakeCertManager(cache *map[certificate.CommonName]certificate.Certificater, cfg configurator.Configurator) *CertManager {
 	rootCertCountry := "US"
 	rootCertLocality := "CA"
-	rootCertOrganization := "Open Service Mesh Tresor"
 	ca, err := NewCA("Fake Tresor CN", 1*time.Hour, rootCertCountry, rootCertLocality, rootCertOrganization)
 	if err != nil {
 		log.Error().Err(err).Msg("Error creating CA for fake cert manager")
@@ -20,7 +24,7 @@ func NewFakeCertManager(cache *map[certificate.CommonName]certificate.Certificat
 
 	return &CertManager{
 		ca:            ca.(*Certificate),
-		announcements: make(chan interface{}),
+		announcements: make(chan announcements.Announcement),
 		cache:         cache,
 		cfg:           cfg,
 	}

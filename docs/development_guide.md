@@ -48,7 +48,6 @@ as a birds-eye view of where the different components are located.
     - `logger/` - logging facilities
     - `metricsstore/` - OSM controller system metrics tools
     - `namespace/` - package with tools handling a service mesh spanning multiple Kubernetes namespaces.
-    - `osm_client/` - OSM client
     - `service/` - tools needed for easier handling of Kubernetes services
     - `signals/` - operating system signal handlers
     - `smi/` - SMI client, informer, caches and tools
@@ -278,6 +277,7 @@ The different chart templates are used as follows:
 - `mutatingwebhook.yaml` is used to deploy a `MutatingWebhookConfiguration` kubernetes resource that enables automatic sidecar injection
 -  `grafana-*.yaml` chart templates are used to deploy a Grafana instance when grafana installation is enabled
 - `prometheus-*.yaml` chart templates are used to deploy a Prometheus instance when prometheus installation is enabled
+- `fluentbit-configmap.yaml` is used to provide configurations for the fluent bit sidecar and its plugins when fluent bit is enabled
 - `jaeger-*.yaml` chart templates are used to deploy a Jaeger instance when tracing is enabled
 
 ### Custom Resource Definitions

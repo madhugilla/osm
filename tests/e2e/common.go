@@ -14,11 +14,12 @@ import (
 	"strings"
 	"time"
 
+	. "github.com/onsi/ginkgo"
+
 	"github.com/docker/docker/client"
 	"github.com/jetstack/cert-manager/pkg/apis/certmanager/v1alpha2"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	certman "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
-	. "github.com/onsi/ginkgo"
 	"github.com/pkg/errors"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -45,13 +46,73 @@ import (
 const (
 	// contant, default name for the Registry Secret
 	registrySecretName = "acr-creds"
-	// constant, default name for the mesh
-	defaultMeshName = "osm-system"
-	// default image tag
-	defaultImageTag = "latest"
 	// test tag prefix, for NS labeling
 	osmTest = "osmTest"
 )
+
+var (
+	// default name for the mesh
+	defaultOsmNamespace = "osm-system"
+	// default image tag
+	defaultImageTag = "latest"
+	// default cert manager
+	defaultCertManager = "tresor"
+	// default deploy Prometheus
+	defaultDeployPrometheus = false
+	// default deploy Grafana
+	defaultDeployGrafana = false
+	// default deploy Jaeger
+	defaultDeployJaeger = false
+	// default deploy Fluentbit
+	defaultDeployFluentbit = false
+	// default envoy loglevel
+	defaultEnvoyLogLevel = "debug"
+)
+
+// OSMDescribeInfo is a struct to represent the tier and bucket of a given e2e test
+type OSMDescribeInfo struct {
+	// tier represents the priority of the test. Lower value indicates higher priority.
+	tier int
+
+	// bucket indicates in which test bucket the test will run in for CI. Each
+	// bucket is run in parallel while tests in the same bucket run sequentially.
+	bucket int
+}
+
+func (o OSMDescribeInfo) String() string {
+	return fmt.Sprintf("[Tier %d][Bucket %d]", o.tier, o.bucket)
+}
+
+// OSMDescribe givens the description of an e2e test
+func OSMDescribe(name string, opts OSMDescribeInfo, body func()) bool {
+	return Describe(opts.String()+" "+name, body)
+}
+
+// InstallType defines several OSM test deployment scenarios
+type InstallType string
+
+const (
+	// SelfInstall uses current kube cluster, installs OSM using CLI
+	SelfInstall InstallType = "SelfInstall"
+	// KindCluster Creates Kind cluster on docker and uses it as cluster, OSM installs through CLI
+	KindCluster InstallType = "KindCluster"
+	// NoInstall uses current kube cluster, assumes an OSM is present in `osmNamespace`
+	NoInstall InstallType = "NoInstall"
+)
+
+// Verifies the instType string flag option is a valid enum type
+func verifyValidInstallType(t InstallType) error {
+	switch t {
+	case SelfInstall:
+		fallthrough
+	case KindCluster:
+		fallthrough
+	case NoInstall:
+		return nil
+	default:
+		return errors.Errorf("%s is not a valid OSM install type", string(t))
+	}
+}
 
 // OsmTestData stores common state, variables and flags for the test at hand
 type OsmTestData struct {
@@ -61,6 +122,7 @@ type OsmTestData struct {
 	waitForCleanup bool // Forces test to wait for effective deletion of resources upon cleanup
 
 	// OSM install-time variables
+	instType     InstallType // Install type.
 	osmNamespace string
 	osmImageTag  string
 
@@ -70,7 +132,6 @@ type OsmTestData struct {
 	ctrRegistryServer   string // server name. Has to be network reachable
 
 	// Kind cluster related vars
-	kindCluster                    bool   // Create and use a kind cluster
 	clusterName                    string // Kind cluster name (used if kindCluster)
 	cleanupKindClusterBetweenTests bool   // Clean and re-create kind cluster between tests
 	cleanupKindCluster             bool   // Cleanup kind cluster upon test finish
@@ -89,7 +150,8 @@ func registerFlags(td *OsmTestData) {
 	flag.BoolVar(&td.cleanupTest, "cleanupTest", true, "Cleanup test resources when done")
 	flag.BoolVar(&td.waitForCleanup, "waitForCleanup", true, "Wait for effective deletion of resources")
 
-	flag.BoolVar(&td.kindCluster, "kindCluster", false, "Creates kind cluster")
+	flag.StringVar((*string)(&td.instType), "installType", string(SelfInstall), "Type of install/deployment for OSM")
+
 	flag.StringVar(&td.clusterName, "kindClusterName", "osm-e2e", "Name of the Kind cluster to be created")
 	flag.BoolVar(&td.cleanupKindCluster, "cleanupKindCluster", true, "Cleanup kind cluster upon exit")
 	flag.BoolVar(&td.cleanupKindClusterBetweenTests, "cleanupKindClusterBetweenTests", false, "Cleanup kind cluster between tests")
@@ -99,7 +161,7 @@ func registerFlags(td *OsmTestData) {
 	flag.StringVar(&td.ctrRegistryPassword, "ctrRegistrySecret", os.Getenv("CTR_REGISTRY_PASSWORD"), "Container registry secret")
 
 	flag.StringVar(&td.osmImageTag, "osmImageTag", utils.GetEnv("CTR_TAG", defaultImageTag), "OSM image tag")
-	flag.StringVar(&td.osmNamespace, "osmNamespace", utils.GetEnv("K8S_NAMESPACE", defaultMeshName), "OSM mesh name")
+	flag.StringVar(&td.osmNamespace, "osmNamespace", utils.GetEnv("K8S_NAMESPACE", defaultOsmNamespace), "OSM Namespace")
 }
 
 // GetTestNamespaceSelectorMap returns a string-based selector used to refer/select all namespace
@@ -122,11 +184,12 @@ func (td *OsmTestData) AreRegistryCredsPresent() bool {
 func (td *OsmTestData) InitTestData(t GinkgoTInterface) error {
 	td.T = t
 
-	if len(td.ctrRegistryServer) == 0 {
-		td.T.Errorf("Did not read any container registry (is CTR_REGISTRY set?)")
+	err := verifyValidInstallType(td.instType)
+	if err != nil {
+		return err
 	}
 
-	if td.kindCluster && td.clusterProvider == nil {
+	if (td.instType == KindCluster) && td.clusterProvider == nil {
 		td.clusterProvider = cluster.NewProvider()
 		td.T.Logf("Creating local kind cluster")
 		if err := td.clusterProvider.Create(td.clusterName); err != nil {
@@ -159,7 +222,7 @@ func (td *OsmTestData) InitTestData(t GinkgoTInterface) error {
 
 	// After client creations, do a wait for kind cluster just in case it's not done yet coming up
 	// Ballparking pod number. kind has a large number of containers to run by default
-	if td.kindCluster && td.clusterProvider != nil {
+	if (td.instType == KindCluster) && td.clusterProvider != nil {
 		if err := td.WaitForPodsRunningReady("kube-system", 120*time.Second, 5); err != nil {
 			return errors.Wrap(err, "failed to wait for kube-system pods")
 		}
@@ -178,6 +241,7 @@ type InstallOSMOpts struct {
 	deployGrafana           bool
 	deployPrometheus        bool
 	deployJaeger            bool
+	deployFluentbit         bool
 
 	vaultHost     string
 	vaultProtocol string
@@ -190,19 +254,22 @@ type InstallOSMOpts struct {
 
 	egressEnabled        bool
 	enablePermissiveMode bool
+	envoyLogLevel        string
+	enableDebugServer    bool
 }
 
 // GetOSMInstallOpts initializes install options for OSM
 func (td *OsmTestData) GetOSMInstallOpts() InstallOSMOpts {
 	return InstallOSMOpts{
 		controlPlaneNS:          td.osmNamespace,
-		certManager:             "tresor",
+		certManager:             defaultCertManager,
 		containerRegistryLoc:    td.ctrRegistryServer,
 		containerRegistrySecret: td.ctrRegistryPassword,
 		osmImagetag:             td.osmImageTag,
-		deployGrafana:           false,
-		deployPrometheus:        false,
-		deployJaeger:            false,
+		deployGrafana:           defaultDeployGrafana,
+		deployPrometheus:        defaultDeployPrometheus,
+		deployJaeger:            defaultDeployJaeger,
+		deployFluentbit:         defaultDeployFluentbit,
 
 		vaultHost:     "vault." + td.osmNamespace + ".svc.cluster.local",
 		vaultProtocol: "http",
@@ -212,13 +279,73 @@ func (td *OsmTestData) GetOSMInstallOpts() InstallOSMOpts {
 		certmanagerIssuerGroup: "cert-manager.io",
 		certmanagerIssuerKind:  "Issuer",
 		certmanagerIssuerName:  "osm-ca",
+		envoyLogLevel:          defaultEnvoyLogLevel,
 	}
 }
 
-// InstallOSM installs OSM. Right now relies on externally calling the binary and a subset of possible opts
-// TODO: refactor install to be able to call it directly here vs. exec-ing CLI.
+// HelmInstallOSM installs an osm control plane using the osm chart which lives in charts/osm
+func (td *OsmTestData) HelmInstallOSM(release, namespace string) error {
+	if td.instType == KindCluster {
+		if err := td.loadOSMImagesIntoKind(); err != nil {
+			return err
+		}
+	}
+
+	values := fmt.Sprintf("OpenServiceMesh.image.registry=%s,OpenServiceMesh.image.tag=%s,OpenServiceMesh.meshName=%s", td.ctrRegistryServer, td.osmImageTag, release)
+	args := []string{"install", release, "../../charts/osm", "--set", values, "--namespace", namespace, "--create-namespace", "--wait"}
+	stdout, stderr, err := td.RunLocal("helm", args)
+	if err != nil {
+		td.T.Logf("stdout:\n%s", stdout)
+		return errors.Errorf("failed to run helm install with osm chart: %s", stderr)
+	}
+
+	return nil
+}
+
+// DeleteHelmRelease uninstalls a particular helm release
+func (td *OsmTestData) DeleteHelmRelease(name, namespace string) error {
+	args := []string{"uninstall", name, "--namespace", namespace}
+	_, _, err := td.RunLocal("helm", args)
+	if err != nil {
+		td.T.Fatal(err)
+	}
+	return nil
+}
+
+// InstallOSM installs OSM. The behavior of this function is dependant on
+// installType and instOpts
 func (td *OsmTestData) InstallOSM(instOpts InstallOSMOpts) error {
-	if td.kindCluster {
+	if td.instType == NoInstall {
+		if instOpts.certManager != defaultCertManager ||
+			instOpts.deployPrometheus != defaultDeployPrometheus ||
+			instOpts.deployGrafana != defaultDeployGrafana ||
+			instOpts.deployJaeger != defaultDeployJaeger ||
+			instOpts.deployFluentbit != defaultDeployFluentbit {
+			Skip("Skipping test: NoInstall marked on a test that requires modified install")
+		}
+
+		// TODO: Check there is a valid OSM instance running already in osmNamespace
+
+		// This resets supported dynamic configs expected by the caller
+		err := td.UpdateOSMConfig("egress",
+			fmt.Sprintf("%t", instOpts.egressEnabled))
+		if err != nil {
+			return err
+		}
+		err = td.UpdateOSMConfig("permissive_traffic_policy_mode",
+			fmt.Sprintf("%t", instOpts.enablePermissiveMode))
+		if err != nil {
+			return err
+		}
+		err = td.UpdateOSMConfig("enable_debug_server",
+			fmt.Sprintf("%t", instOpts.enableDebugServer))
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if td.instType == KindCluster {
 		td.T.Log("Getting image data")
 		imageNames := []string{
 			"osm-controller",
@@ -237,7 +364,7 @@ func (td *OsmTestData) InstallOSM(instOpts InstallOSMOpts) error {
 		if err != nil {
 			return errors.Wrap(err, "failed to get image data")
 		}
-		defer imageData.Close()
+		defer imageData.Close() //nolint: errcheck,gosec
 		nodes, err := td.clusterProvider.ListNodes(td.clusterName)
 		if err != nil {
 			return errors.Wrap(err, "failed to list kind nodes")
@@ -255,15 +382,15 @@ func (td *OsmTestData) InstallOSM(instOpts InstallOSMOpts) error {
 	}
 
 	var args []string
-
 	args = append(args, "install",
 		"--container-registry="+instOpts.containerRegistryLoc,
 		"--osm-image-tag="+instOpts.osmImagetag,
-		"--namespace="+instOpts.controlPlaneNS,
+		"--osm-namespace="+instOpts.controlPlaneNS,
 		"--certificate-manager="+instOpts.certManager,
 		"--enable-egress="+strconv.FormatBool(instOpts.egressEnabled),
 		"--enable-permissive-traffic-policy="+strconv.FormatBool(instOpts.enablePermissiveMode),
-		"--enable-debug-server",
+		"--enable-debug-server="+strconv.FormatBool(instOpts.enableDebugServer),
+		"--envoy-log-level="+instOpts.envoyLogLevel,
 	)
 
 	switch instOpts.certManager {
@@ -288,7 +415,7 @@ func (td *OsmTestData) InstallOSM(instOpts InstallOSMOpts) error {
 		)
 	}
 
-	if !td.kindCluster {
+	if !(td.instType == KindCluster) {
 		// Making sure the image is always pulled in registry-based testing
 		args = append(args, "--osm-image-pull-policy=Always")
 	}
@@ -300,6 +427,8 @@ func (td *OsmTestData) InstallOSM(instOpts InstallOSMOpts) error {
 	args = append(args, fmt.Sprintf("--enable-prometheus=%v", instOpts.deployPrometheus))
 	args = append(args, fmt.Sprintf("--enable-grafana=%v", instOpts.deployGrafana))
 	args = append(args, fmt.Sprintf("--deploy-jaeger=%v", instOpts.deployJaeger))
+	args = append(args, fmt.Sprintf("--enable-fluentbit=%v", instOpts.deployFluentbit))
+	args = append(args, fmt.Sprintf("--timeout=%v", 90*time.Second))
 
 	td.T.Log("Installing OSM")
 	stdout, stderr, err := td.RunLocal(filepath.FromSlash("../../bin/osm"), args)
@@ -310,6 +439,48 @@ func (td *OsmTestData) InstallOSM(instOpts InstallOSMOpts) error {
 		return errors.Wrap(err, "failed to run osm install")
 	}
 
+	return nil
+}
+
+// GetConfigMap is a wrapper to get a config map by name in a particular namespace
+func (td *OsmTestData) GetConfigMap(name, namespace string) (*corev1.ConfigMap, error) {
+	configmap, err := td.client.CoreV1().ConfigMaps(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return configmap, nil
+}
+
+func (td *OsmTestData) loadOSMImagesIntoKind() error {
+	td.T.Log("Getting image data")
+	imageNames := []string{
+		"osm-controller",
+		"init",
+	}
+	docker, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
+	if err != nil {
+		return errors.Wrap(err, "failed to create docker client")
+	}
+	var imageIDs []string
+	for _, name := range imageNames {
+		imageName := fmt.Sprintf("%s/%s:%s", td.ctrRegistryServer, name, td.osmImageTag)
+		imageIDs = append(imageIDs, imageName)
+	}
+	imageData, err := docker.ImageSave(context.TODO(), imageIDs)
+	if err != nil {
+		return errors.Wrap(err, "failed to get image data")
+	}
+	defer imageData.Close() //nolint: errcheck,gosec
+	nodes, err := td.clusterProvider.ListNodes(td.clusterName)
+	if err != nil {
+		return errors.Wrap(err, "failed to list kind nodes")
+	}
+	for _, n := range nodes {
+		td.T.Log("Loading images onto node", n)
+		if err := nodeutils.LoadImageArchive(n, imageData); err != nil {
+			return errors.Wrap(err, "failed to load images")
+		}
+	}
 	return nil
 }
 
@@ -568,11 +739,10 @@ func (td *OsmTestData) AddNsToMesh(sidecardInject bool, ns ...string) error {
 	td.T.Logf("Adding Namespaces [+%s] to the mesh", ns)
 	for _, namespace := range ns {
 		args := []string{"namespace", "add", namespace}
-		if sidecardInject {
-			args = append(args, "--enable-sidecar-injection")
+		if !sidecardInject {
+			args = append(args, "--disable-sidecar-injection")
 		}
 
-		args = append(args, "--namespace="+td.osmNamespace)
 		stdout, stderr, err := td.RunLocal(filepath.FromSlash("../../bin/osm"), args)
 		if err != nil {
 			td.T.Logf("error running osm namespace add")
@@ -584,6 +754,7 @@ func (td *OsmTestData) AddNsToMesh(sidecardInject bool, ns ...string) error {
 	return nil
 }
 
+// UpdateOSMConfig updates OSM configmap
 func (td *OsmTestData) UpdateOSMConfig(key, value string) error {
 	patch := []byte(fmt.Sprintf(`{"data": {%q: %q}}`, key, value))
 	_, err := td.client.CoreV1().ConfigMaps(td.osmNamespace).Patch(context.TODO(), "osm-config", types.StrategicMergePatchType, patch, metav1.PatchOptions{})
@@ -635,6 +806,25 @@ func (td *OsmTestData) CreateNs(nsName string, labels map[string]string) error {
 
 // DeleteNs deletes a test NS
 func (td *OsmTestData) DeleteNs(nsName string) error {
+	// Delete Helm releases created in the namespace
+	helm := &action.Configuration{}
+	if err := helm.Init(td.env.RESTClientGetter(), nsName, "secret", td.T.Logf); err != nil {
+		td.T.Logf("WARNING: failed to initialize helm config, skipping helm cleanup: %v", err)
+	} else {
+		list := action.NewList(helm)
+		list.All = true
+		if releases, err := list.Run(); err != nil {
+			td.T.Logf("WARNING: failed to list helm releases in namespace %s, skipping release cleanup: %v", nsName, err)
+		} else {
+			del := action.NewUninstall(helm)
+			for _, release := range releases {
+				if _, err := del.Run(release.Name); err != nil {
+					td.T.Logf("WARNING: failed to delete helm release %s in namespace %s: %v", release.Name, nsName, err)
+				}
+			}
+		}
+	}
+
 	var backgroundDelete metav1.DeletionPropagation = metav1.DeletePropagationBackground
 
 	td.T.Logf("Deleting namespace %v", nsName)
@@ -728,7 +918,7 @@ func (td *OsmTestData) RunRemote(
 
 // WaitForPodsRunningReady waits for a <n> number of pods on an NS to be running and ready
 func (td *OsmTestData) WaitForPodsRunningReady(ns string, timeout time.Duration, nExpectedRunningPods int) error {
-	td.T.Logf("Wait for pods ready in ns [%s]...", ns)
+	td.T.Logf("Wait up to %v for %d pods ready in ns [%s]...", timeout, nExpectedRunningPods, ns)
 	for start := time.Now(); time.Since(start) < timeout; time.Sleep(2 * time.Second) {
 		pods, err := td.client.CoreV1().Pods(ns).List(context.TODO(), metav1.ListOptions{
 			FieldSelector: "status.phase=Running",
@@ -798,6 +988,12 @@ const (
 
 // Cleanup is Used to cleanup resorces once the test is done
 func (td *OsmTestData) Cleanup(ct CleanupType) {
+	if td.client == nil {
+		// Avoid any cleanup (crash) if no test is run;
+		// init doesn't happen and clientsets are nil
+		return
+	}
+
 	// The condition enters to cleanup K8s resources if
 	// - cleanup is enabled and it's not a kind cluster
 	// - cleanup is enabled and it is a kind cluster, but the kind cluster will NOT be
@@ -805,8 +1001,8 @@ func (td *OsmTestData) Cleanup(ct CleanupType) {
 	//   The latter is a condition to speed up and not wait for k8s resources to vanish
 	//   if the current kind cluster has to be destroyed anyway.
 	if td.cleanupTest &&
-		(!td.kindCluster ||
-			(td.kindCluster &&
+		(!(td.instType == KindCluster) ||
+			(td.instType == KindCluster &&
 				(ct == Test && !td.cleanupKindClusterBetweenTests) ||
 				(ct == Suite && !td.cleanupKindCluster))) {
 		// Use selector to refer to all namespaces used in this test
@@ -845,7 +1041,7 @@ func (td *OsmTestData) Cleanup(ct CleanupType) {
 	}
 
 	// Kind cluster deletion, if needed
-	if td.kindCluster && td.clusterProvider != nil {
+	if (td.instType == KindCluster) && td.clusterProvider != nil {
 		if ct == Test && td.cleanupKindClusterBetweenTests || ct == Suite && td.cleanupKindCluster {
 			td.T.Logf("Deleting kind cluster: %s", td.clusterName)
 			if err := td.clusterProvider.Delete(td.clusterName, clientcmd.RecommendedHomeFile); err != nil {
@@ -859,10 +1055,14 @@ func (td *OsmTestData) Cleanup(ct CleanupType) {
 //DockerConfig and other configs are docker-specific container registry secret structures.
 // Most of it is taken or referenced from kubectl source itself
 type DockerConfig map[string]DockerConfigEntry
+
+// DockerConfigJSON  is a struct for docker-specific config
 type DockerConfigJSON struct {
 	Auths       DockerConfig      `json:"auths"`
 	HTTPHeaders map[string]string `json:"HttpHeaders,omitempty"`
 }
+
+// DockerConfigEntry is a struct for docker-specific container registry secret structures
 type DockerConfigEntry struct {
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
