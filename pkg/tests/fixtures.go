@@ -78,8 +78,8 @@ const (
 	// SelectorValue is a Pod selector value constant.
 	SelectorValue = "frontend"
 
-	// EnvoyUID is the unique ID of the Envoy used for unit tests.
-	EnvoyUID = "A-B-C-D"
+	// ProxyUUID is the unique ID of the Envoy used for unit tests.
+	ProxyUUID = "abcdef12-5791-9876-abcd-1234567890ab"
 
 	// ServicePort is the port used by a service
 	ServicePort = 8888
@@ -120,6 +120,34 @@ var (
 	BookwarehouseService = service.MeshService{
 		Namespace: Namespace,
 		Name:      BookwarehouseServiceName,
+	}
+
+	// BookstoreV1Hostnames are the hostnames for bookstore-v1 service
+	BookstoreV1Hostnames = []string{
+		"bookstore-v1",
+		"bookstore-v1.default",
+		"bookstore-v1.default.svc",
+		"bookstore-v1.default.svc.cluster",
+		"bookstore-v1.default.svc.cluster.local",
+		"bookstore-v1:8888",
+		"bookstore-v1.default:8888",
+		"bookstore-v1.default.svc:8888",
+		"bookstore-v1.default.svc.cluster:8888",
+		"bookstore-v1.default.svc.cluster.local:8888",
+	}
+
+	// BookstoreV2Hostnames are the hostnames for the bookstore-v2 service
+	BookstoreV2Hostnames = []string{
+		"bookstore-v2",
+		"bookstore-v2.default",
+		"bookstore-v2.default.svc",
+		"bookstore-v2.default.svc.cluster",
+		"bookstore-v2.default.svc.cluster.local",
+		"bookstore-v2:8888",
+		"bookstore-v2.default:8888",
+		"bookstore-v2.default.svc:8888",
+		"bookstore-v2.default.svc.cluster:8888",
+		"bookstore-v2.default.svc.cluster.local:8888",
 	}
 
 	// BookstoreBuyHTTPRoute is an HTTP route to buy books
@@ -373,7 +401,7 @@ func NewPodTestFixture(namespace string, podName string) corev1.Pod {
 			Namespace: namespace,
 			Labels: map[string]string{
 				SelectorKey:                      SelectorValue,
-				constants.EnvoyUniqueIDLabelName: EnvoyUID,
+				constants.EnvoyUniqueIDLabelName: ProxyUUID,
 			},
 		},
 		Spec: corev1.PodSpec{
@@ -390,7 +418,7 @@ func NewPodTestFixtureWithOptions(namespace string, podName string, serviceAccou
 			Namespace: namespace,
 			Labels: map[string]string{
 				SelectorKey:                      SelectorValue,
-				constants.EnvoyUniqueIDLabelName: EnvoyUID,
+				constants.EnvoyUniqueIDLabelName: ProxyUUID,
 			},
 		},
 		Spec: corev1.PodSpec{

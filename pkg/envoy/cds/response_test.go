@@ -47,7 +47,7 @@ var _ = Describe("CDS Response", func() {
 
 	Context("Test cds.NewResponse", func() {
 		It("Returns unique list of clusters for CDS", func() {
-			proxyUUID := fmt.Sprintf("proxy-0-%s", uuid.New())
+			proxyUUID := uuid.New()
 			podName := fmt.Sprintf("pod-0-%s", uuid.New())
 
 			// The format of the CN matters
@@ -57,7 +57,7 @@ var _ = Describe("CDS Response", func() {
 			{
 				// Create a pod to match the CN
 				pod := tests.NewPodTestFixtureWithOptions(tests.Namespace, podName, proxyServiceAccountName)
-				pod.Labels[constants.EnvoyUniqueIDLabelName] = proxyUUID // This is what links the Pod and the Certificate
+				pod.Labels[constants.EnvoyUniqueIDLabelName] = proxyUUID.String() // This is what links the Pod and the Certificate
 				_, err := kubeClient.CoreV1().Pods(tests.Namespace).Create(context.TODO(), &pod, metav1.CreateOptions{})
 				Expect(err).ToNot(HaveOccurred())
 			}
@@ -81,7 +81,7 @@ var _ = Describe("CDS Response", func() {
 			mockConfigurator.EXPECT().GetTracingHost().Return(constants.DefaultTracingHost).AnyTimes()
 			mockConfigurator.EXPECT().GetTracingPort().Return(constants.DefaultTracingPort).AnyTimes()
 
-			resp, err := NewResponse(catalog, proxy, nil, mockConfigurator)
+			resp, err := NewResponse(catalog, proxy, nil, mockConfigurator, nil)
 			Expect(err).ToNot(HaveOccurred())
 
 			// There are to any.Any resources in the ClusterDiscoveryStruct (Clusters)
@@ -148,12 +148,12 @@ var _ = Describe("CDS Response", func() {
 		})
 
 		It("Returns a remote cluster object", func() {
-			localService := tests.BookbuyerService
-			remoteService := tests.BookstoreV1Service
+			downstreamSvc := tests.BookbuyerService
+			upstreamSvc := tests.BookstoreV1Service
 
 			mockConfigurator.EXPECT().IsPermissiveTrafficPolicyMode().Return(false).Times(1)
 
-			remoteCluster, err := getRemoteServiceCluster(remoteService, localService, mockConfigurator)
+			remoteCluster, err := getUpstreamServiceCluster(upstreamSvc, downstreamSvc, mockConfigurator)
 			Expect(err).ToNot(HaveOccurred())
 
 			expectedClusterLoadAssignment := &xds_endpoint.ClusterLoadAssignment{
@@ -186,8 +186,8 @@ var _ = Describe("CDS Response", func() {
 			}
 
 			// Checking for the value by generating the same value the same way is reduntant
-			// Nonetheless, as getRemoteServiceCluster logic gets more complicated, this might just be ok to have
-			upstreamTLSProto, err := envoy.MessageToAny(envoy.GetUpstreamTLSContext(proxyService, remoteService.GetCommonName().String()))
+			// Nonetheless, as getUpstreamServiceCluster logic gets more complicated, this might just be ok to have
+			upstreamTLSProto, err := envoy.MessageToAny(envoy.GetUpstreamTLSContext(proxyService, upstreamSvc))
 			Expect(err).ToNot(HaveOccurred())
 
 			expectedCluster := xds_cluster.Cluster{
@@ -256,7 +256,7 @@ var _ = Describe("CDS Response", func() {
 					},
 					AlpnProtocols: envoy.ALPNInMesh,
 				},
-				Sni:                remoteService.GetCommonName().String(),
+				Sni:                upstreamSvc.ServerName(),
 				AllowRenegotiation: false,
 			}
 			Expect(upstreamTLSContext.CommonTlsContext.TlsParams).To(Equal(expectedTLSContext.CommonTlsContext.TlsParams))

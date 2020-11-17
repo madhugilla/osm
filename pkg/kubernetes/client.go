@@ -3,13 +3,17 @@ package kubernetes
 import (
 	"reflect"
 
+	mapset "github.com/deckarep/golang-set"
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/openservicemesh/osm/pkg/announcements"
 	"github.com/openservicemesh/osm/pkg/constants"
 	"github.com/openservicemesh/osm/pkg/service"
 )
@@ -21,7 +25,7 @@ func NewKubernetesController(kubeClient kubernetes.Interface, meshName string, s
 		kubeClient:    kubeClient,
 		meshName:      meshName,
 		informers:     InformerCollection{},
-		announcements: make(map[InformerKey]chan interface{}),
+		announcements: make(map[InformerKey]chan announcements.Announcement),
 		cacheSynced:   make(chan interface{}),
 	}
 
@@ -52,11 +56,13 @@ func (c *Client) initNamespaceMonitor() {
 	// Add informer
 	c.informers[Namespaces] = informerFactory.Core().V1().Namespaces().Informer()
 
-	// Announcement channel for Namespaces
-	c.announcements[Namespaces] = make(chan interface{})
-
 	// Add event handler to informer
-	c.informers[Namespaces].AddEventHandler(GetKubernetesEventHandlers((string)(Namespaces), ProviderName, c.announcements[Namespaces], nil))
+	nsEventTypes := EventTypes{
+		Add:    announcements.NamespaceAdded,
+		Update: announcements.NamespaceUpdated,
+		Delete: announcements.NamespaceDeleted,
+	}
+	c.informers[Namespaces].AddEventHandler(GetKubernetesEventHandlers((string)(Namespaces), ProviderName, nil, nil, nil, nsEventTypes))
 }
 
 // Initializes Service monitoring
@@ -71,9 +77,14 @@ func (c *Client) initServicesMonitor() {
 	}
 
 	// Announcement channel for Services
-	c.announcements[Services] = make(chan interface{})
+	c.announcements[Services] = make(chan announcements.Announcement)
 
-	c.informers[Services].AddEventHandler(GetKubernetesEventHandlers((string)(Services), ProviderName, c.announcements[Services], shouldObserve))
+	svcEventTypes := EventTypes{
+		Add:    announcements.ServiceAdded,
+		Update: announcements.ServiceUpdated,
+		Delete: announcements.ServiceDeleted,
+	}
+	c.informers[Services].AddEventHandler(GetKubernetesEventHandlers((string)(Services), ProviderName, c.announcements[Services], shouldObserve, nil, svcEventTypes))
 }
 
 func (c *Client) initPodMonitor() {
@@ -87,9 +98,14 @@ func (c *Client) initPodMonitor() {
 	}
 
 	// Announcement channel for Pods
-	c.announcements[Pods] = make(chan interface{})
+	c.announcements[Pods] = make(chan announcements.Announcement)
 
-	c.informers[Pods].AddEventHandler(GetKubernetesEventHandlers((string)(Pods), ProviderName, c.announcements[Services], shouldObserve))
+	podEventTypes := EventTypes{
+		Add:    announcements.PodAdded,
+		Update: announcements.PodUpdated,
+		Delete: announcements.PodDeleted,
+	}
+	c.informers[Pods].AddEventHandler(GetKubernetesEventHandlers((string)(Pods), ProviderName, c.announcements[Pods], shouldObserve, nil, podEventTypes))
 }
 
 func (c *Client) run(stop <-chan struct{}) error {
@@ -171,7 +187,7 @@ func (c Client) ListServices() []*corev1.Service {
 }
 
 // GetAnnouncementsChannel gets the Announcements channel back
-func (c Client) GetAnnouncementsChannel(informerID InformerKey) <-chan interface{} {
+func (c Client) GetAnnouncementsChannel(informerID InformerKey) <-chan announcements.Announcement {
 	return c.announcements[informerID]
 }
 
@@ -199,4 +215,33 @@ func (c Client) ListPods() []*corev1.Pod {
 		pods = append(pods, pod)
 	}
 	return pods
+}
+
+// ListServiceAccountsForService lists ServiceAccounts associated with the given service
+func (c Client) ListServiceAccountsForService(svc service.MeshService) ([]service.K8sServiceAccount, error) {
+	var svcAccounts []service.K8sServiceAccount
+
+	k8sSvc := c.GetService(svc)
+	if k8sSvc == nil {
+		return nil, errors.Errorf("Error fetching service %q: %s", svc, errServiceNotFound)
+	}
+
+	svcAccountsSet := mapset.NewSet()
+	pods := c.ListPods()
+	for _, pod := range pods {
+		svcRawSelector := k8sSvc.Spec.Selector
+		selector := labels.Set(svcRawSelector).AsSelector()
+		if selector.Matches(labels.Set(pod.Labels)) {
+			podSvcAccount := service.K8sServiceAccount{
+				Name:      pod.Spec.ServiceAccountName,
+				Namespace: pod.Namespace, // ServiceAccount must belong to the same namespace as the pod
+			}
+			svcAccountsSet.Add(podSvcAccount)
+		}
+	}
+
+	for svcAcc := range svcAccountsSet.Iter() {
+		svcAccounts = append(svcAccounts, svcAcc.(service.K8sServiceAccount))
+	}
+	return svcAccounts, nil
 }

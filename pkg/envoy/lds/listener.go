@@ -1,10 +1,6 @@
 package lds
 
 import (
-	"net"
-	"strconv"
-	"strings"
-
 	xds_core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	xds_listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	xds_hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
@@ -14,7 +10,6 @@ import (
 
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"
-	"github.com/golang/protobuf/ptypes/wrappers"
 
 	"github.com/openservicemesh/osm/pkg/catalog"
 	"github.com/openservicemesh/osm/pkg/configurator"
@@ -26,13 +21,12 @@ import (
 )
 
 const (
-	outboundMeshFilterChainName   = "outbound-mesh-filter-chain"
 	outboundEgressFilterChainName = "outbound-egress-filter-chain"
 	singleIpv4Mask                = 32
 )
 
-func newOutboundListener(catalog catalog.MeshCataloger, cfg configurator.Configurator, localSvc []service.MeshService) (*xds_listener.Listener, error) {
-	serviceFilterChains, err := getOutboundFilterChains(catalog, cfg, localSvc)
+func newOutboundListener(catalog catalog.MeshCataloger, cfg configurator.Configurator, downstreamSvc []service.MeshService) (*xds_listener.Listener, error) {
+	serviceFilterChains, err := getOutboundFilterChains(catalog, cfg, downstreamSvc)
 	if err != nil {
 		log.Error().Err(err).Msgf("Error getting filter chains for outbound listener")
 		return nil, err
@@ -120,39 +114,6 @@ func buildEgressFilterChain() (*xds_listener.FilterChain, error) {
 	}, nil
 }
 
-func parseCIDR(cidr string) (string, uint32, error) {
-	var addr string
-
-	_, _, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return addr, 0, err
-	}
-	chunks := strings.Split(cidr, "/")
-	addr = chunks[0]
-	prefix, err := strconv.Atoi(chunks[1])
-	if err != nil {
-		return addr, 0, err
-	}
-
-	return addr, uint32(prefix), nil
-}
-
-func getCIDRRange(cidr string) (*xds_core.CidrRange, error) {
-	addr, prefix, err := parseCIDR(cidr)
-	if err != nil {
-		return nil, err
-	}
-
-	cidrRange := &xds_core.CidrRange{
-		AddressPrefix: addr,
-		PrefixLen: &wrappers.UInt32Value{
-			Value: prefix,
-		},
-	}
-
-	return cidrRange, nil
-}
-
 // getOutboundFilterForService builds a network filter action for traffic destined to a specific service
 func getOutboundFilterForService(dstSvc service.MeshService, cfg configurator.Configurator) (*xds_listener.Filter, error) {
 	var marshalledFilter *any.Any
@@ -199,14 +160,14 @@ func getOutboundFilterChainMatchForService(dstSvc service.MeshService, catalog c
 	return filterMatch, nil
 }
 
-func getOutboundFilterChains(catalog catalog.MeshCataloger, cfg configurator.Configurator, localSvc []service.MeshService) ([]*xds_listener.FilterChain, error) {
+func getOutboundFilterChains(catalog catalog.MeshCataloger, cfg configurator.Configurator, downstreamSvc []service.MeshService) ([]*xds_listener.FilterChain, error) {
 	var filterChains []*xds_listener.FilterChain
 	var dstServicesSet map[service.MeshService]struct{} = make(map[service.MeshService]struct{}) // Set, avoid dups
 
 	// Assuming single service in pod till #1682, #1575 get addressed
-	outboundSvc, err := catalog.ListAllowedOutboundServices(localSvc[0])
+	outboundSvc, err := catalog.ListAllowedOutboundServices(downstreamSvc[0])
 	if err != nil {
-		log.Error().Err(err).Msgf("Error getting allowed outbound services for %s", localSvc[0].String())
+		log.Error().Err(err).Msgf("Error getting allowed outbound services for %s", downstreamSvc[0].String())
 		return nil, err
 	}
 

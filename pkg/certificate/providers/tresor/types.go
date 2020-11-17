@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/openservicemesh/osm/pkg/announcements"
 	"github.com/openservicemesh/osm/pkg/certificate"
 	"github.com/openservicemesh/osm/pkg/certificate/pem"
 	"github.com/openservicemesh/osm/pkg/configurator"
@@ -16,7 +17,7 @@ const (
 	rootCertificateName = "root-certificate"
 
 	// How many bits to use for the RSA key
-	rsaBits = 4096
+	rsaBits = 2048
 
 	// How many bits in the certificate serial number
 	certSerialNumberBits = 128
@@ -33,7 +34,7 @@ type CertManager struct {
 	ca certificate.Certificater
 
 	// The channel announcing to the rest of the system when a certificate has changed
-	announcements chan interface{}
+	announcements chan announcements.Announcement
 
 	// Cache for all the certificates issued
 	cache     *map[certificate.CommonName]certificate.Certificater

@@ -27,8 +27,10 @@ CTR_REGISTRY_CREDS_NAME="${CTR_REGISTRY_CREDS_NAME:-acr-creds}"
 DEPLOY_TRAFFIC_SPLIT="${DEPLOY_TRAFFIC_SPLIT:-true}"
 CTR_TAG="${CTR_TAG:-$(git rev-parse HEAD)}"
 IMAGE_PULL_POLICY="${IMAGE_PULL_POLICY:-Always}"
+ENABLE_DEBUG_SERVER="${ENABLE_DEBUG_SERVER:-true}"
 ENABLE_EGRESS="${ENABLE_EGRESS:-false}"
 ENABLE_GRAFANA="${ENABLE_GRAFANA:-false}"
+ENABLE_FLUENTBIT="${ENABLE_FLUENTBIT:-false}"
 DEPLOY_WITH_SAME_SA="${DEPLOY_WITH_SAME_SA:-false}"
 ENVOY_LOG_LEVEL="${ENVOY_LOG_LEVEL:-debug}"
 
@@ -39,37 +41,6 @@ exit_error() {
     error="$1"
     echo "$error"
     exit 1
-}
-
-wait_for_osm_pods() {
-  # Wait for OSM pods to be ready before deploying the apps.
-  pods=$(kubectl get pods -n "$K8S_NAMESPACE" -o name | sed 's/^pod\///')
-  if [ -n "$pods" ]; then
-    for pod in $pods; do
-      wait_for_pod_ready "$pod"
-    done
-  else
-    exit_error "No Pods found in namespace $K8S_NAMESPACE"
-  fi
-}
-
-wait_for_pod_ready() {
-    max=15
-    pod_name=$1
-
-    for x in $(seq 1 $max); do
-        pod_ready="$(kubectl get pods -n "$K8S_NAMESPACE" "${pod_name}" -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}')"
-        if [ "$pod_ready" == "True" ]; then
-            echo "[${x}] Pod ready ${pod_name}"
-            return
-        fi
-
-        pod_status="$(kubectl get pods -n "$K8S_NAMESPACE" "${pod_name}" -o 'jsonpath={..status.phase}')"
-        echo "[${x}] Pod status is ${pod_status}; waiting for pod ${pod_name} to be Ready" && sleep 5
-    done
-
-    pod_status="$(kubectl get pods -n "$K8S_NAMESPACE" "${pod_name}" -o 'jsonpath={..status.phase}')"
-    exit_error "Pod ${pod_name} status is ${pod_status} -- still not Ready"
 }
 
 # Check if Docker daemon is running
@@ -112,7 +83,7 @@ echo "Certificate Manager in use: $CERT_MANAGER"
 if [ "$CERT_MANAGER" = "vault" ]; then
   # shellcheck disable=SC2086
   bin/osm install \
-      --namespace "$K8S_NAMESPACE" \
+      --osm-namespace "$K8S_NAMESPACE" \
       --mesh-name "$MESH_NAME" \
       --certificate-manager="$CERT_MANAGER" \
       --vault-host="$VAULT_HOST" \
@@ -122,29 +93,31 @@ if [ "$CERT_MANAGER" = "vault" ]; then
       --container-registry-secret "$CTR_REGISTRY_CREDS_NAME" \
       --osm-image-tag "$CTR_TAG" \
       --osm-image-pull-policy "$IMAGE_PULL_POLICY" \
-      --enable-debug-server \
+      --enable-debug-server="$ENABLE_DEBUG_SERVER" \
       --enable-egress="$ENABLE_EGRESS" \
       --enable-grafana="$ENABLE_GRAFANA" \
+      --enable-fluentbit="$ENABLE_FLUENTBIT" \
       --envoy-log-level "$ENVOY_LOG_LEVEL" \
+      --timeout=90s \
       $optionalInstallArgs
 else
   # shellcheck disable=SC2086
   bin/osm install \
-      --namespace "$K8S_NAMESPACE" \
+      --osm-namespace "$K8S_NAMESPACE" \
       --mesh-name "$MESH_NAME" \
       --certificate-manager="$CERT_MANAGER" \
       --container-registry "$CTR_REGISTRY" \
       --container-registry-secret "$CTR_REGISTRY_CREDS_NAME" \
       --osm-image-tag "$CTR_TAG" \
       --osm-image-pull-policy "$IMAGE_PULL_POLICY" \
-      --enable-debug-server \
+      --enable-debug-server="$ENABLE_DEBUG_SERVER"\
       --enable-egress="$ENABLE_EGRESS" \
       --enable-grafana="$ENABLE_GRAFANA" \
+      --enable-fluentbit="$ENABLE_FLUENTBIT" \
       --envoy-log-level "$ENVOY_LOG_LEVEL" \
+      --timeout=90s \
       $optionalInstallArgs
 fi
-
-wait_for_osm_pods
 
 ./demo/configure-app-namespaces.sh
 

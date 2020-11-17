@@ -7,6 +7,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/openservicemesh/osm/pkg/announcements"
 	"github.com/openservicemesh/osm/pkg/logger"
 	"github.com/openservicemesh/osm/pkg/service"
 )
@@ -16,17 +17,21 @@ var (
 )
 
 // EventType is the type of event we have received from Kubernetes
-type EventType int
+type EventType string
+
+func (et EventType) String() string {
+	return string(et)
+}
 
 const (
-	// CreateEvent is a type of a Kubernetes API event.
-	CreateEvent EventType = iota + 1
+	// AddEvent is a type of a Kubernetes API event.
+	AddEvent EventType = "ADD"
 
 	// UpdateEvent is a type of a Kubernetes API event.
-	UpdateEvent
+	UpdateEvent EventType = "UPDATE"
 
 	// DeleteEvent is a type of a Kubernetes API event.
-	DeleteEvent
+	DeleteEvent EventType = "DELETE"
 )
 
 const (
@@ -36,12 +41,6 @@ const (
 	// ProviderName is used for provider logging
 	ProviderName = "Kubernetes"
 )
-
-// Event is the combined type and actual object we received from Kubernetes
-type Event struct {
-	Type  EventType
-	Value interface{}
-}
 
 // InformerKey stores the different Informers we keep for K8s resources
 type InformerKey string
@@ -64,7 +63,7 @@ type Client struct {
 	kubeClient    kubernetes.Interface
 	informers     InformerCollection
 	cacheSynced   chan interface{}
-	announcements map[InformerKey]chan interface{}
+	announcements map[InformerKey]chan announcements.Announcement
 }
 
 // Controller is the controller interface for K8s services
@@ -86,8 +85,11 @@ type Controller interface {
 	GetNamespace(ns string) *corev1.Namespace
 
 	// Returns the announcement channel for a certain Informer ID
-	GetAnnouncementsChannel(informerID InformerKey) <-chan interface{}
+	GetAnnouncementsChannel(informerID InformerKey) <-chan announcements.Announcement
 
 	// ListPods returns a list of pods part of the mesh
 	ListPods() []*corev1.Pod
+
+	// ListServiceAccountsForService lists ServiceAccounts associated with the given service
+	ListServiceAccountsForService(svc service.MeshService) ([]service.K8sServiceAccount, error)
 }
