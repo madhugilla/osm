@@ -6,34 +6,22 @@ import (
 	"testing"
 
 	mapset "github.com/deckarep/golang-set"
+	"github.com/golang/mock/gomock"
 	target "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha2"
+	spec "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/specs/v1alpha3"
+	specs "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/specs/v1alpha3"
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/openservicemesh/osm/pkg/constants"
+	"github.com/openservicemesh/osm/pkg/endpoint"
+	k8s "github.com/openservicemesh/osm/pkg/kubernetes"
 	"github.com/openservicemesh/osm/pkg/service"
 	"github.com/openservicemesh/osm/pkg/smi"
 	"github.com/openservicemesh/osm/pkg/tests"
 	"github.com/openservicemesh/osm/pkg/trafficpolicy"
 	"github.com/openservicemesh/osm/pkg/utils"
-)
-
-var (
-	testGetAllRoute = trafficpolicy.HTTPRoute{
-		PathRegex: "/all",
-		Methods:   []string{"GET"},
-		Headers: map[string]string{
-			"user-agent": "some-agent",
-		},
-	}
-
-	testGetSomeRoute = trafficpolicy.HTTPRoute{
-		PathRegex: "/some",
-		Methods:   []string{"GET"},
-		Headers: map[string]string{
-			"user-agent": "another-agent",
-		},
-	}
 )
 
 func TestIsValidTrafficTarget(t *testing.T) {
@@ -85,131 +73,10 @@ func TestIsValidTrafficTarget(t *testing.T) {
 	}
 }
 
-func TestBuildTrafficPolicies(t *testing.T) {
-	mc := newFakeMeshCatalogForRoutes(t)
-
-	testCases := []struct {
-		name             string
-		sourceServices   []service.MeshService
-		destServices     []service.MeshService
-		routes           []trafficpolicy.HTTPRoute
-		expectedPolicies []*trafficpolicy.TrafficPolicy
-	}{
-		{
-			name:           "policy for 1 source service and 1 destination service with 1 route",
-			sourceServices: []service.MeshService{tests.BookbuyerService},
-			destServices:   []service.MeshService{tests.BookstoreV2Service},
-			routes:         []trafficpolicy.HTTPRoute{testGetAllRoute},
-			expectedPolicies: []*trafficpolicy.TrafficPolicy{
-				{
-					Name:        "bookstore-v2-default",
-					Source:      tests.BookbuyerService,
-					Destination: tests.BookstoreV2Service,
-					HTTPRoutesClusters: []trafficpolicy.RouteWeightedClusters{
-						{
-							HTTPRoute: testGetAllRoute,
-							WeightedClusters: mapset.NewSet(service.WeightedCluster{
-								ClusterName: "default/bookstore-v2",
-								Weight:      100,
-							}),
-						},
-					},
-					Hostnames: tests.BookstoreV2Hostnames,
-				},
-			},
-		},
-		{
-			name:           "policy for 1 source service and 2 destination services with one destination service that doesn't exist",
-			sourceServices: []service.MeshService{tests.BookbuyerService},
-			destServices: []service.MeshService{tests.BookstoreV2Service, {
-				Namespace: "default",
-				Name:      "nonexistentservices",
-			}},
-			routes: []trafficpolicy.HTTPRoute{testGetAllRoute},
-			expectedPolicies: []*trafficpolicy.TrafficPolicy{
-				{
-					Name:        "bookstore-v2-default",
-					Source:      tests.BookbuyerService,
-					Destination: tests.BookstoreV2Service,
-					HTTPRoutesClusters: []trafficpolicy.RouteWeightedClusters{
-						{
-							HTTPRoute: testGetAllRoute,
-							WeightedClusters: mapset.NewSet(service.WeightedCluster{
-								ClusterName: "default/bookstore-v2",
-								Weight:      100,
-							}),
-						},
-					},
-					Hostnames: tests.BookstoreV2Hostnames,
-				},
-			},
-		},
-		{
-			name:           "policies for 1 source service, 2 destination services, and multiple routes ",
-			sourceServices: []service.MeshService{tests.BookbuyerService},
-			destServices:   []service.MeshService{tests.BookstoreV2Service, tests.BookstoreV1Service},
-			routes:         []trafficpolicy.HTTPRoute{testGetAllRoute, testGetSomeRoute},
-			expectedPolicies: []*trafficpolicy.TrafficPolicy{
-				{
-					Name:        "bookstore-v2-default",
-					Source:      tests.BookbuyerService,
-					Destination: tests.BookstoreV2Service,
-					HTTPRoutesClusters: []trafficpolicy.RouteWeightedClusters{
-						{
-							HTTPRoute: testGetAllRoute,
-							WeightedClusters: mapset.NewSet(service.WeightedCluster{
-								ClusterName: "default/bookstore-v2",
-								Weight:      100,
-							}),
-						},
-						{
-							HTTPRoute: testGetSomeRoute,
-							WeightedClusters: mapset.NewSet(service.WeightedCluster{
-								ClusterName: "default/bookstore-v2",
-								Weight:      100,
-							}),
-						},
-					},
-					Hostnames: tests.BookstoreV2Hostnames,
-				},
-				{
-					Name:        "bookstore-v1-default",
-					Source:      tests.BookbuyerService,
-					Destination: tests.BookstoreV1Service,
-					HTTPRoutesClusters: []trafficpolicy.RouteWeightedClusters{
-						{
-							HTTPRoute: testGetAllRoute,
-							WeightedClusters: mapset.NewSet(service.WeightedCluster{
-								ClusterName: "default/bookstore-v1",
-								Weight:      100,
-							}),
-						},
-						{
-							HTTPRoute: testGetSomeRoute,
-							WeightedClusters: mapset.NewSet(service.WeightedCluster{
-								ClusterName: "default/bookstore-v1",
-								Weight:      100,
-							}),
-						},
-					},
-					Hostnames: tests.BookstoreV1Hostnames,
-				},
-			},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("Testing build traffic policies when %s ", tc.name), func(t *testing.T) {
-			policies := mc.buildTrafficPolicies(tc.sourceServices, tc.destServices, tc.routes)
-			assert.ElementsMatch(t, tc.expectedPolicies, policies, tc.name)
-		})
-	}
-}
-
 func TestGetHostnamesForUpstreamService(t *testing.T) {
 	assert := assert.New(t)
 
-	mc := newFakeMeshCatalogForRoutes(t)
+	mc := newFakeMeshCatalogForRoutes(t, testParams{})
 
 	testCases := []struct {
 		name              string
@@ -325,7 +192,7 @@ func TestRoutesFromRules(t *testing.T) {
 		name           string
 		rules          []target.TrafficTargetRule
 		namespace      string
-		expectedRoutes []trafficpolicy.HTTPRoute
+		expectedRoutes []trafficpolicy.HTTPRouteMatch
 	}{
 		{
 			name: "http route group and match name exist",
@@ -337,7 +204,7 @@ func TestRoutesFromRules(t *testing.T) {
 				},
 			},
 			namespace:      tests.Namespace,
-			expectedRoutes: []trafficpolicy.HTTPRoute{tests.BookstoreBuyHTTPRoute},
+			expectedRoutes: []trafficpolicy.HTTPRouteMatch{tests.BookstoreBuyHTTPRoute},
 		},
 		{
 			name: "http route group and match name do not exist",
@@ -349,7 +216,7 @@ func TestRoutesFromRules(t *testing.T) {
 				},
 			},
 			namespace:      tests.Namespace,
-			expectedRoutes: []trafficpolicy.HTTPRoute{},
+			expectedRoutes: []trafficpolicy.HTTPRouteMatch{},
 		},
 	}
 
@@ -403,22 +270,22 @@ func TestGetTrafficPoliciesForService(t *testing.T) {
 			input: tests.BookbuyerService,
 			output: []trafficpolicy.TrafficTarget{
 				{
-					Name:        utils.GetTrafficTargetName(tests.TrafficTargetName, tests.BookbuyerService, tests.BookstoreV1Service),
-					Destination: tests.BookstoreV1Service,
-					Source:      tests.BookbuyerService,
-					HTTPRoutes:  tests.BookstoreV1TrafficPolicy.HTTPRoutes,
+					Name:             utils.GetTrafficTargetName(tests.TrafficTargetName, tests.BookbuyerService, tests.BookstoreV1Service),
+					Destination:      tests.BookstoreV1Service,
+					Source:           tests.BookbuyerService,
+					HTTPRouteMatches: tests.BookstoreV1TrafficPolicy.HTTPRouteMatches,
 				},
 				{
-					Name:        utils.GetTrafficTargetName(tests.TrafficTargetName, tests.BookbuyerService, tests.BookstoreV2Service),
-					Destination: tests.BookstoreV2Service,
-					Source:      tests.BookbuyerService,
-					HTTPRoutes:  tests.BookstoreV2TrafficPolicy.HTTPRoutes,
+					Name:             utils.GetTrafficTargetName(tests.TrafficTargetName, tests.BookbuyerService, tests.BookstoreV2Service),
+					Destination:      tests.BookstoreV2Service,
+					Source:           tests.BookbuyerService,
+					HTTPRouteMatches: tests.BookstoreV2TrafficPolicy.HTTPRouteMatches,
 				},
 				{
-					Name:        utils.GetTrafficTargetName(tests.TrafficTargetName, tests.BookbuyerService, tests.BookstoreApexService),
-					Destination: tests.BookstoreApexService,
-					Source:      tests.BookbuyerService,
-					HTTPRoutes:  tests.BookstoreApexTrafficPolicy.HTTPRoutes,
+					Name:             utils.GetTrafficTargetName(tests.TrafficTargetName, tests.BookbuyerService, tests.BookstoreApexService),
+					Destination:      tests.BookstoreApexService,
+					Source:           tests.BookbuyerService,
+					HTTPRouteMatches: tests.BookstoreApexTrafficPolicy.HTTPRouteMatches,
 				},
 			},
 		},
@@ -441,7 +308,7 @@ func TestGetHTTPPathsPerRoute(t *testing.T) {
 	assert.Nil(err)
 
 	specKey := mc.getTrafficSpecName("HTTPRouteGroup", tests.Namespace, tests.RouteGroupName)
-	expected := map[trafficpolicy.TrafficSpecName]map[trafficpolicy.TrafficSpecMatchName]trafficpolicy.HTTPRoute{
+	expected := map[trafficpolicy.TrafficSpecName]map[trafficpolicy.TrafficSpecMatchName]trafficpolicy.HTTPRouteMatch{
 		specKey: {
 			trafficpolicy.TrafficSpecMatchName(tests.BuyBooksMatchName): {
 				PathRegex: tests.BookstoreBuyPath,
@@ -505,7 +372,7 @@ func TestBuildAllowPolicyForSourceToDest(t *testing.T) {
 	expectedDestinationTrafficResource := utils.K8sSvcToMeshSvc(destination)
 
 	expectedHostHeaders := map[string]string{"user-agent": tests.HTTPUserAgent}
-	expectedRoute := trafficpolicy.HTTPRoute{
+	expectedRoute := trafficpolicy.HTTPRouteMatch{
 		PathRegex: constants.RegexMatchAll,
 		Methods:   []string{constants.WildcardHTTPMethod},
 		Headers:   expectedHostHeaders,
@@ -514,19 +381,92 @@ func TestBuildAllowPolicyForSourceToDest(t *testing.T) {
 	trafficTarget := mc.buildAllowPolicyForSourceToDest(source, destination)
 	assert.Equal(trafficTarget.Source, expectedSourceTrafficResource)
 	assert.Equal(trafficTarget.Destination, expectedDestinationTrafficResource)
-	assert.Equal(trafficTarget.HTTPRoutes[0].PathRegex, expectedRoute.PathRegex)
-	assert.ElementsMatch(trafficTarget.HTTPRoutes[0].Methods, expectedRoute.Methods)
+	assert.Equal(trafficTarget.HTTPRouteMatches[0].PathRegex, expectedRoute.PathRegex)
+	assert.ElementsMatch(trafficTarget.HTTPRouteMatches[0].Methods, expectedRoute.Methods)
 }
 
-func TestListAllowedOutboundServices(t *testing.T) {
+func TestListAllowedOutboundServicesForIdentity(t *testing.T) {
 	assert := assert.New(t)
 
-	mc := newFakeMeshCatalog()
-	actualList, err := mc.ListAllowedOutboundServices(tests.BookbuyerService)
-	assert.Nil(err)
+	testCases := []struct {
+		name           string
+		serviceAccount service.K8sServiceAccount
+		expectedList   []service.MeshService
+		permissiveMode bool
+	}{
+		{
+			name:           "traffic targets configured for service account",
+			serviceAccount: tests.BookbuyerServiceAccount,
+			expectedList:   []service.MeshService{tests.BookstoreV1Service, tests.BookstoreV2Service, tests.BookstoreApexService},
+			permissiveMode: false,
+		},
+		{
+			name: "traffic targets not configured for service account",
+			serviceAccount: service.K8sServiceAccount{
+				Name:      "some-name",
+				Namespace: "some-ns",
+			},
+			expectedList:   nil,
+			permissiveMode: false,
+		},
+		{
+			name:           "permissive mode enabled",
+			serviceAccount: tests.BookstoreServiceAccount,
+			expectedList:   []service.MeshService{tests.BookstoreV1Service, tests.BookstoreV2Service, tests.BookstoreApexService, tests.BookbuyerService},
+			permissiveMode: true,
+		},
+	}
 
-	expectedList := []service.MeshService{tests.BookstoreV1Service, tests.BookstoreV2Service, tests.BookstoreApexService}
-	assert.ElementsMatch(actualList, expectedList)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mc := newFakeMeshCatalogForRoutes(t, testParams{
+				permissiveMode: tc.permissiveMode,
+			})
+			actualList := mc.ListAllowedOutboundServicesForIdentity(tc.serviceAccount)
+			assert.ElementsMatch(actualList, tc.expectedList)
+		})
+	}
+}
+
+func TestListMeshServices(t *testing.T) {
+	assert := assert.New(t)
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mockKubeController := k8s.NewMockController(mockCtrl)
+	mc := MeshCatalog{
+		kubeController: mockKubeController,
+	}
+
+	testCases := []struct {
+		name     string
+		services map[string]string // name: namespace
+	}{
+		{
+			name:     "services exist in mesh",
+			services: map[string]string{"bookstore": "bookstore-ns", "bookbuyer": "bookbuyer-ns", "bookwarehouse": "bookwarehouse"},
+		},
+		{
+			name:     "no services in mesh",
+			services: map[string]string{},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			k8sServices := []*corev1.Service{}
+			expectedMeshServices := []service.MeshService{}
+
+			for name, namespace := range tc.services {
+				k8sServices = append(k8sServices, tests.NewServiceFixture(name, namespace, map[string]string{}))
+				expectedMeshServices = append(expectedMeshServices, tests.NewMeshServiceFixture(name, namespace))
+			}
+
+			mockKubeController.EXPECT().ListServices().Return(k8sServices)
+			actual := mc.listMeshServices()
+			assert.Equal(expectedMeshServices, actual)
+		})
+	}
 }
 
 func TestGetWeightedClusterForService(t *testing.T) {
@@ -763,7 +703,7 @@ func TestGetTrafficTargetFromSrcDstHash(t *testing.T) {
 	srcDstServiceHash := "src-ns/source:dst-ns/destination"
 
 	targetName := "test"
-	httpRoutes := []trafficpolicy.HTTPRoute{
+	httpRoutes := []trafficpolicy.HTTPRouteMatch{
 		{
 			PathRegex: tests.BookstoreBuyPath,
 			Methods:   []string{"GET"},
@@ -776,11 +716,560 @@ func TestGetTrafficTargetFromSrcDstHash(t *testing.T) {
 	trafficTarget := getTrafficTargetFromSrcDstHash(srcDstServiceHash, targetName, httpRoutes)
 
 	expectedTrafficTarget := trafficpolicy.TrafficTarget{
-		Source:      src,
-		Destination: dst,
-		Name:        targetName,
-		HTTPRoutes:  httpRoutes,
+		Source:           src,
+		Destination:      dst,
+		Name:             targetName,
+		HTTPRouteMatches: httpRoutes,
 	}
 
 	assert.Equal(trafficTarget, expectedTrafficTarget)
+}
+
+func TestBuildOutboundPolicies(t *testing.T) {
+	assert := assert.New(t)
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mockKubeController := k8s.NewMockController(mockCtrl)
+	mockMeshSpec := smi.NewMockMeshSpec(mockCtrl)
+	mockEndpointProvider := endpoint.NewMockProvider(mockCtrl)
+
+	mc := MeshCatalog{
+		kubeController:     mockKubeController,
+		meshSpec:           mockMeshSpec,
+		endpointsProviders: []endpoint.Provider{mockEndpointProvider},
+	}
+	sourceSA := service.K8sServiceAccount{
+		Name:      "bookbuyer",
+		Namespace: "bookbuyer-ns",
+	}
+	destSA := service.K8sServiceAccount{
+		Name:      "bookstore",
+		Namespace: "bookstore-ns",
+	}
+
+	destMeshService := service.MeshService{
+		Name:      "bookstore",
+		Namespace: "bookstore-ns",
+	}
+
+	destK8sService := tests.NewServiceFixture(destMeshService.Name, destMeshService.Namespace, map[string]string{})
+
+	trafficSpec := spec.HTTPRouteGroup{
+		TypeMeta: v1.TypeMeta{
+			APIVersion: "specs.smi-spec.io/v1alpha2",
+			Kind:       "HTTPRouteGroup",
+		},
+		ObjectMeta: v1.ObjectMeta{
+			Namespace: "bookstore-ns",
+			Name:      tests.RouteGroupName,
+		},
+
+		Spec: spec.HTTPRouteGroupSpec{
+			Matches: []spec.HTTPMatch{
+				{
+					Name:      tests.BuyBooksMatchName,
+					PathRegex: tests.BookstoreBuyPath,
+					Methods:   []string{"GET"},
+					Headers: map[string]string{
+						"user-agent": tests.HTTPUserAgent,
+					},
+				},
+				{
+					Name:      tests.SellBooksMatchName,
+					PathRegex: tests.BookstoreSellPath,
+					Methods:   []string{"GET"},
+					Headers: map[string]string{
+						"user-agent": tests.HTTPUserAgent,
+					},
+				},
+			},
+		},
+	}
+	mockMeshSpec.EXPECT().ListHTTPTrafficSpecs().Return([]*specs.HTTPRouteGroup{&trafficSpec}).AnyTimes()
+	mockEndpointProvider.EXPECT().GetServicesForServiceAccount(destSA).Return([]service.MeshService{destMeshService}, nil).AnyTimes()
+	mockEndpointProvider.EXPECT().GetID().Return("fake").AnyTimes()
+	mockKubeController.EXPECT().GetService(destMeshService).Return(destK8sService).AnyTimes()
+
+	trafficTarget := tests.NewSMITrafficTarget(sourceSA.Name, sourceSA.Namespace, destSA.Name, destSA.Namespace)
+	hostnames := []string{
+		"bookstore.bookstore-ns",
+		"bookstore.bookstore-ns.svc",
+		"bookstore.bookstore-ns.svc.cluster",
+		"bookstore.bookstore-ns.svc.cluster.local",
+		"bookstore.bookstore-ns:8888",
+		"bookstore.bookstore-ns.svc:8888",
+		"bookstore.bookstore-ns.svc.cluster:8888",
+		"bookstore.bookstore-ns.svc.cluster.local:8888",
+	}
+	bookstoreWeightedCluster := service.WeightedCluster{
+		ClusterName: "bookstore-ns/bookstore",
+		Weight:      100,
+	}
+	expected := []*trafficpolicy.OutboundTrafficPolicy{
+		{
+			Name:      destMeshService.Name + "-" + destMeshService.Namespace,
+			Hostnames: hostnames,
+			Routes: []*trafficpolicy.RouteWeightedClusters{
+				{
+					HTTPRouteMatch:   wildCardRouteMatch,
+					WeightedClusters: mapset.NewSet(bookstoreWeightedCluster),
+				},
+			},
+		},
+	}
+	actual := mc.buildOutboundPolicies(sourceSA, &trafficTarget)
+	assert.ElementsMatch(expected, actual)
+}
+
+func TestBuildInboundPoliciesDiffNamespaces(t *testing.T) {
+	assert := assert.New(t)
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mockKubeController := k8s.NewMockController(mockCtrl)
+	mockMeshSpec := smi.NewMockMeshSpec(mockCtrl)
+	mockEndpointProvider := endpoint.NewMockProvider(mockCtrl)
+
+	mc := MeshCatalog{
+		kubeController:     mockKubeController,
+		meshSpec:           mockMeshSpec,
+		endpointsProviders: []endpoint.Provider{mockEndpointProvider},
+	}
+
+	sourceSA := service.K8sServiceAccount{
+		Name:      "bookbuyer",
+		Namespace: "bookbuyer-ns",
+	}
+	destSA := service.K8sServiceAccount{
+		Name:      "bookstore",
+		Namespace: "bookstore-ns",
+	}
+
+	destMeshService := service.MeshService{
+		Name:      "bookstore",
+		Namespace: "bookstore-ns",
+	}
+
+	destK8sService := tests.NewServiceFixture(destMeshService.Name, destMeshService.Namespace, map[string]string{})
+
+	trafficSpec := spec.HTTPRouteGroup{
+		TypeMeta: v1.TypeMeta{
+			APIVersion: "specs.smi-spec.io/v1alpha2",
+			Kind:       "HTTPRouteGroup",
+		},
+		ObjectMeta: v1.ObjectMeta{
+			Namespace: "bookstore-ns",
+			Name:      tests.RouteGroupName,
+		},
+
+		Spec: spec.HTTPRouteGroupSpec{
+			Matches: []spec.HTTPMatch{
+				{
+					Name:      tests.BuyBooksMatchName,
+					PathRegex: tests.BookstoreBuyPath,
+					Methods:   []string{"GET"},
+					Headers: map[string]string{
+						"user-agent": tests.HTTPUserAgent,
+					},
+				},
+				{
+					Name:      tests.SellBooksMatchName,
+					PathRegex: tests.BookstoreSellPath,
+					Methods:   []string{"GET"},
+					Headers: map[string]string{
+						"user-agent": tests.HTTPUserAgent,
+					},
+				},
+			},
+		},
+	}
+
+	mockMeshSpec.EXPECT().ListHTTPTrafficSpecs().Return([]*specs.HTTPRouteGroup{&trafficSpec}).AnyTimes()
+	mockEndpointProvider.EXPECT().GetServicesForServiceAccount(destSA).Return([]service.MeshService{destMeshService}, nil).AnyTimes()
+	mockEndpointProvider.EXPECT().GetID().Return("fake").AnyTimes()
+	mockKubeController.EXPECT().GetService(destMeshService).Return(destK8sService).AnyTimes()
+
+	trafficTarget := tests.NewSMITrafficTarget(sourceSA.Name, sourceSA.Namespace, destSA.Name, destSA.Namespace)
+	expectedHostnames := []string{
+		"bookstore",
+		"bookstore.bookstore-ns",
+		"bookstore.bookstore-ns.svc",
+		"bookstore.bookstore-ns.svc.cluster",
+		"bookstore.bookstore-ns.svc.cluster.local",
+		"bookstore:8888",
+		"bookstore.bookstore-ns:8888",
+		"bookstore.bookstore-ns.svc:8888",
+		"bookstore.bookstore-ns.svc.cluster:8888",
+		"bookstore.bookstore-ns.svc.cluster.local:8888",
+	}
+	bookstoreWeightedCluster := service.WeightedCluster{
+		ClusterName: "bookstore-ns/bookstore",
+		Weight:      100,
+	}
+	expectedPolicies := []*trafficpolicy.InboundTrafficPolicy{
+		{
+			Name:      "bookstore-bookstore-ns",
+			Hostnames: expectedHostnames,
+			Rules: []*trafficpolicy.Rule{
+				{
+					Route: trafficpolicy.RouteWeightedClusters{
+						HTTPRouteMatch:   tests.BookstoreBuyHTTPRoute,
+						WeightedClusters: mapset.NewSet(bookstoreWeightedCluster),
+					},
+					AllowedServiceAccounts: mapset.NewSet(sourceSA),
+				},
+				{
+					Route: trafficpolicy.RouteWeightedClusters{
+						HTTPRouteMatch:   tests.BookstoreSellHTTPRoute,
+						WeightedClusters: mapset.NewSet(bookstoreWeightedCluster),
+					},
+					AllowedServiceAccounts: mapset.NewSet(sourceSA),
+				},
+			},
+		},
+	}
+	actual := mc.buildInboundPolicies(&trafficTarget)
+	assert.ElementsMatch(expectedPolicies, actual)
+}
+
+func TestBuildInboundPoliciesSameNamespace(t *testing.T) {
+	assert := assert.New(t)
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mockKubeController := k8s.NewMockController(mockCtrl)
+	mockMeshSpec := smi.NewMockMeshSpec(mockCtrl)
+	mockEndpointProvider := endpoint.NewMockProvider(mockCtrl)
+
+	mc := MeshCatalog{
+		kubeController:     mockKubeController,
+		meshSpec:           mockMeshSpec,
+		endpointsProviders: []endpoint.Provider{mockEndpointProvider},
+	}
+
+	sourceSA := service.K8sServiceAccount{
+		Name:      "bookbuyer",
+		Namespace: "default",
+	}
+	destSA := service.K8sServiceAccount{
+		Name:      "bookstore",
+		Namespace: "default",
+	}
+
+	destMeshService := service.MeshService{
+		Name:      "bookstore",
+		Namespace: "default",
+	}
+
+	destK8sService := tests.NewServiceFixture(destMeshService.Name, destMeshService.Namespace, map[string]string{})
+
+	trafficSpec := spec.HTTPRouteGroup{
+		TypeMeta: v1.TypeMeta{
+			APIVersion: "specs.smi-spec.io/v1alpha2",
+			Kind:       "HTTPRouteGroup",
+		},
+		ObjectMeta: v1.ObjectMeta{
+			Namespace: "default",
+			Name:      tests.RouteGroupName,
+		},
+
+		Spec: spec.HTTPRouteGroupSpec{
+			Matches: []spec.HTTPMatch{
+				{
+					Name:      tests.BuyBooksMatchName,
+					PathRegex: tests.BookstoreBuyPath,
+					Methods:   []string{"GET"},
+					Headers: map[string]string{
+						"user-agent": tests.HTTPUserAgent,
+					},
+				},
+				{
+					Name:      tests.SellBooksMatchName,
+					PathRegex: tests.BookstoreSellPath,
+					Methods:   []string{"GET"},
+					Headers: map[string]string{
+						"user-agent": tests.HTTPUserAgent,
+					},
+				},
+			},
+		},
+	}
+
+	mockMeshSpec.EXPECT().ListHTTPTrafficSpecs().Return([]*specs.HTTPRouteGroup{&trafficSpec}).AnyTimes()
+	mockEndpointProvider.EXPECT().GetServicesForServiceAccount(destSA).Return([]service.MeshService{destMeshService}, nil).AnyTimes()
+	mockEndpointProvider.EXPECT().GetID().Return("fake").AnyTimes()
+	mockKubeController.EXPECT().GetService(destMeshService).Return(destK8sService).AnyTimes()
+
+	trafficTarget := tests.NewSMITrafficTarget(sourceSA.Name, sourceSA.Namespace, destSA.Name, destSA.Namespace)
+	expectedHostnames := []string{
+		"bookstore",
+		"bookstore.default",
+		"bookstore.default.svc",
+		"bookstore.default.svc.cluster",
+		"bookstore.default.svc.cluster.local",
+		"bookstore:8888",
+		"bookstore.default:8888",
+		"bookstore.default.svc:8888",
+		"bookstore.default.svc.cluster:8888",
+		"bookstore.default.svc.cluster.local:8888",
+	}
+	bookstoreWeightedCluster := service.WeightedCluster{
+		ClusterName: "default/bookstore",
+		Weight:      100,
+	}
+	expectedPolicies := []*trafficpolicy.InboundTrafficPolicy{
+		{
+			Name:      "bookstore-default",
+			Hostnames: expectedHostnames,
+			Rules: []*trafficpolicy.Rule{
+				{
+					Route: trafficpolicy.RouteWeightedClusters{
+						HTTPRouteMatch:   tests.BookstoreBuyHTTPRoute,
+						WeightedClusters: mapset.NewSet(bookstoreWeightedCluster),
+					},
+					AllowedServiceAccounts: mapset.NewSet(sourceSA),
+				},
+				{
+					Route: trafficpolicy.RouteWeightedClusters{
+						HTTPRouteMatch:   tests.BookstoreSellHTTPRoute,
+						WeightedClusters: mapset.NewSet(bookstoreWeightedCluster),
+					},
+					AllowedServiceAccounts: mapset.NewSet(sourceSA),
+				},
+			},
+		},
+	}
+	actual := mc.buildInboundPolicies(&trafficTarget)
+	assert.ElementsMatch(expectedPolicies, actual)
+}
+
+func TestListPoliciesFromTrafficTargets(t *testing.T) {
+	assert := assert.New(t)
+
+	expectedBookbuyerOutbound := []*trafficpolicy.OutboundTrafficPolicy{
+		{
+			Name:      "bookstore-v1",
+			Hostnames: tests.BookstoreV1Hostnames,
+			Routes: []*trafficpolicy.RouteWeightedClusters{
+				{
+					HTTPRouteMatch:   wildCardRouteMatch,
+					WeightedClusters: mapset.NewSet(tests.BookstoreV1DefaultWeightedCluster),
+				},
+			},
+		},
+		{
+			Name:      "bookstore-v2",
+			Hostnames: tests.BookstoreV2Hostnames,
+			Routes: []*trafficpolicy.RouteWeightedClusters{
+				{
+					HTTPRouteMatch:   wildCardRouteMatch,
+					WeightedClusters: mapset.NewSet(tests.BookstoreV2DefaultWeightedCluster),
+				},
+			},
+		},
+		{
+			Name:      "bookstore-apex",
+			Hostnames: tests.BookstoreApexHostnames,
+			Routes: []*trafficpolicy.RouteWeightedClusters{
+				{
+					HTTPRouteMatch:   wildCardRouteMatch,
+					WeightedClusters: mapset.NewSet(tests.BookstoreApexDefaultWeightedCluster),
+				},
+			},
+		},
+	}
+
+	expectedBookstoreInbound := []*trafficpolicy.InboundTrafficPolicy{
+		{
+			Name:      "bookstore-v1-default",
+			Hostnames: tests.BookstoreV1Hostnames,
+			Rules: []*trafficpolicy.Rule{
+				{
+					Route: trafficpolicy.RouteWeightedClusters{
+						HTTPRouteMatch:   tests.BookstoreBuyHTTPRoute,
+						WeightedClusters: mapset.NewSet(tests.BookstoreV1DefaultWeightedCluster),
+					},
+					AllowedServiceAccounts: mapset.NewSet(tests.BookbuyerServiceAccount),
+				},
+				{
+					Route: trafficpolicy.RouteWeightedClusters{
+						HTTPRouteMatch:   tests.BookstoreSellHTTPRoute,
+						WeightedClusters: mapset.NewSet(tests.BookstoreV1DefaultWeightedCluster),
+					},
+					AllowedServiceAccounts: mapset.NewSet(tests.BookbuyerServiceAccount),
+				},
+			},
+		},
+		{
+			Name:      "bookstore-v2-default",
+			Hostnames: tests.BookstoreV2Hostnames,
+			Rules: []*trafficpolicy.Rule{
+				{
+					Route: trafficpolicy.RouteWeightedClusters{
+						HTTPRouteMatch:   tests.BookstoreBuyHTTPRoute,
+						WeightedClusters: mapset.NewSet(tests.BookstoreV2DefaultWeightedCluster),
+					},
+					AllowedServiceAccounts: mapset.NewSet(tests.BookbuyerServiceAccount),
+				},
+				{
+					Route: trafficpolicy.RouteWeightedClusters{
+						HTTPRouteMatch:   tests.BookstoreSellHTTPRoute,
+						WeightedClusters: mapset.NewSet(tests.BookstoreV2DefaultWeightedCluster),
+					},
+					AllowedServiceAccounts: mapset.NewSet(tests.BookbuyerServiceAccount),
+				},
+			},
+		},
+		{
+			Name:      "bookstore-apex-default",
+			Hostnames: tests.BookstoreApexHostnames,
+			Rules: []*trafficpolicy.Rule{
+				{
+					Route: trafficpolicy.RouteWeightedClusters{
+						HTTPRouteMatch:   tests.BookstoreBuyHTTPRoute,
+						WeightedClusters: mapset.NewSet(tests.BookstoreApexDefaultWeightedCluster),
+					},
+					AllowedServiceAccounts: mapset.NewSet(tests.BookbuyerServiceAccount),
+				},
+				{
+					Route: trafficpolicy.RouteWeightedClusters{
+						HTTPRouteMatch:   tests.BookstoreSellHTTPRoute,
+						WeightedClusters: mapset.NewSet(tests.BookstoreApexDefaultWeightedCluster),
+					},
+					AllowedServiceAccounts: mapset.NewSet(tests.BookbuyerServiceAccount),
+				},
+			},
+		},
+	}
+
+	testCases := []struct {
+		name             string
+		serviceAccount   service.K8sServiceAccount
+		expectedInbound  []*trafficpolicy.InboundTrafficPolicy
+		expectedOutbound []*trafficpolicy.OutboundTrafficPolicy
+		expectedErr      bool
+	}{
+		{
+			name:             "outbound policies",
+			serviceAccount:   tests.BookbuyerServiceAccount,
+			expectedInbound:  []*trafficpolicy.InboundTrafficPolicy{},
+			expectedOutbound: expectedBookbuyerOutbound,
+			expectedErr:      false,
+		},
+		{
+			name:             "inbound policies",
+			serviceAccount:   tests.BookstoreServiceAccount,
+			expectedInbound:  expectedBookstoreInbound,
+			expectedOutbound: []*trafficpolicy.OutboundTrafficPolicy{},
+			expectedErr:      false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mc := newFakeMeshCatalogForRoutes(t, testParams{})
+			inbound, outbound, errs := mc.listPoliciesFromTrafficTargets(tc.serviceAccount)
+			assert.ElementsMatch(tc.expectedInbound, inbound)
+			assert.ElementsMatch(tc.expectedOutbound, outbound)
+			if tc.expectedErr {
+				assert.NotNil(errs)
+			} else {
+				assert.Nil(errs)
+			}
+		})
+	}
+}
+
+func TestGetDestinationServicesFromTrafficTarget(t *testing.T) {
+	assert := assert.New(t)
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mockKubeController := k8s.NewMockController(mockCtrl)
+	mockEndpointProvider := endpoint.NewMockProvider(mockCtrl)
+
+	mc := MeshCatalog{
+		kubeController:     mockKubeController,
+		endpointsProviders: []endpoint.Provider{mockEndpointProvider},
+	}
+
+	destSA := service.K8sServiceAccount{
+		Name:      "bookstore",
+		Namespace: "bookstore-ns",
+	}
+
+	destMeshService := service.MeshService{
+		Name:      "bookstore",
+		Namespace: "bookstore-ns",
+	}
+
+	destK8sService := tests.NewServiceFixture(destMeshService.Name, destMeshService.Namespace, map[string]string{})
+
+	mockEndpointProvider.EXPECT().GetServicesForServiceAccount(destSA).Return([]service.MeshService{destMeshService}, nil).AnyTimes()
+	mockEndpointProvider.EXPECT().GetID().Return("fake").AnyTimes()
+	mockKubeController.EXPECT().GetService(destMeshService).Return(destK8sService).AnyTimes()
+
+	trafficTarget := &target.TrafficTarget{
+		TypeMeta: v1.TypeMeta{
+			APIVersion: "access.smi-spec.io/v1alpha2",
+			Kind:       "TrafficTarget",
+		},
+		ObjectMeta: v1.ObjectMeta{
+			Name:      "target",
+			Namespace: "bookstore-ns",
+		},
+		Spec: target.TrafficTargetSpec{
+			Destination: target.IdentityBindingSubject{
+				Kind:      "Name",
+				Name:      "bookstore",
+				Namespace: "bookstore-ns",
+			},
+			Sources: []target.IdentityBindingSubject{{
+				Kind:      "Name",
+				Name:      "bookbuyer",
+				Namespace: "default",
+			}},
+		},
+	}
+
+	actual, err := mc.getDestinationServicesFromTrafficTarget(trafficTarget)
+	assert.Nil(err)
+	assert.Equal([]service.MeshService{destMeshService}, actual)
+}
+
+func TestBuildPolicyName(t *testing.T) {
+	assert := assert.New(t)
+
+	svc := service.MeshService{
+		Namespace: "default",
+		Name:      "foo",
+	}
+
+	testCases := []struct {
+		name          string
+		svc           service.MeshService
+		sameNamespace bool
+		expectedName  string
+	}{
+		{
+			name:          "same namespace",
+			svc:           svc,
+			sameNamespace: true,
+			expectedName:  "foo",
+		},
+		{
+			name:          "different namespace",
+			svc:           svc,
+			sameNamespace: false,
+			expectedName:  "foo-default",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := buildPolicyName(tc.svc, tc.sameNamespace)
+			assert.Equal(tc.expectedName, actual)
+		})
+	}
 }

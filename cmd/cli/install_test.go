@@ -3,9 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -525,35 +526,124 @@ var _ = Describe("Test envoy log level types", func() {
 	})
 })
 
+var _ = Describe("deployPrometheus is true", func() {
+	var (
+		out    *bytes.Buffer
+		store  *storage.Storage
+		config *helm.Configuration
+		err    error
+	)
+
+	BeforeEach(func() {
+		out = new(bytes.Buffer)
+		store = storage.Init(driver.NewMemory())
+		if mem, ok := store.Driver.(*driver.Memory); ok {
+			mem.SetNamespace(settings.Namespace())
+		}
+
+		config = &helm.Configuration{
+			Releases: store,
+			KubeClient: &kubefake.PrintingKubeClient{
+				Out: ioutil.Discard},
+			Capabilities: chartutil.DefaultCapabilities,
+			Log:          func(format string, v ...interface{}) {},
+		}
+
+		installCmd := getDefaultInstallCmd(out)
+		installCmd.deployPrometheus = true
+		installCmd.enablePrometheusScraping = false
+
+		err = installCmd.run(config)
+	})
+
+	It("should not error", func() {
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out.String()).To(Equal("Prometheus scraping is disabled. To enable it, set prometheus_scraping in osm-system/osm-config to true.\nOSM installed successfully in namespace [osm-system] with mesh name [osm]\n"))
+	})
+})
+
 func TestResolveValues(t *testing.T) {
-	assert := assert.New(t)
+	tests := []struct {
+		name        string
+		installCmd  installCmd
+		expected    map[string]interface{}
+		expectedErr error
+	}{
+		{
+			name: "default",
+			installCmd: func() installCmd {
+				installCmd := getDefaultInstallCmd(ioutil.Discard)
 
-	out := new(bytes.Buffer)
-	installCmd := getDefaultInstallCmd(out)
+				// Fill out fields which are empty by default
+				installCmd.containerRegistrySecret = testRegistrySecret
+				installCmd.vaultHost = testVaultHost
+				installCmd.vaultToken = testVaultToken
+				return installCmd
+			}(),
+			expected: func() map[string]interface{} {
+				expectedValues := getDefaultValues()
 
-	// Fill out fields which are empty by default
-	installCmd.containerRegistrySecret = testRegistrySecret
-	installCmd.vaultHost = testVaultHost
-	installCmd.vaultToken = testVaultToken
-
-	expectedValues := getDefaultValues()
-
-	// Fill out fields which are empty by default
-	valuesConfig := []string{
-		fmt.Sprintf("OpenServiceMesh.imagePullSecrets[0].name=%s", testRegistrySecret),
-		fmt.Sprintf("OpenServiceMesh.vault.host=%s", testVaultHost),
-		fmt.Sprintf("OpenServiceMesh.vault.token=%s", testVaultToken),
+				// Fill out fields which are empty by default
+				valuesConfig := []string{
+					fmt.Sprintf("OpenServiceMesh.imagePullSecrets[0].name=%s", testRegistrySecret),
+					fmt.Sprintf("OpenServiceMesh.vault.host=%s", testVaultHost),
+					fmt.Sprintf("OpenServiceMesh.vault.token=%s", testVaultToken),
+				}
+				for _, val := range valuesConfig {
+					// parses Helm strvals line and merges into a map
+					err := strvals.ParseInto(val, expectedValues)
+					assert.Nil(t, err)
+				}
+				return expectedValues
+			}(),
+		},
+		{
+			name: "--set creates additional values",
+			installCmd: func() installCmd {
+				installCmd := getDefaultInstallCmd(ioutil.Discard)
+				installCmd.setOptions = []string{"new=from set", "key1=val1,key2=val2"}
+				return installCmd
+			}(),
+			expected: func() map[string]interface{} {
+				vals := getDefaultValues()
+				vals["new"] = "from set"
+				vals["key1"] = "val1"
+				vals["key2"] = "val2"
+				return vals
+			}(),
+		},
+		{
+			name: "--set for an existing parameter as no effect",
+			installCmd: func() installCmd {
+				installCmd := getDefaultInstallCmd(ioutil.Discard)
+				installCmd.setOptions = []string{"OpenServiceMesh.meshName=set"}
+				return installCmd
+			}(),
+			expected: getDefaultValues(),
+		},
+		{
+			name: "invalid --set format",
+			installCmd: func() installCmd {
+				installCmd := getDefaultInstallCmd(ioutil.Discard)
+				installCmd.setOptions = []string{"can't set this"}
+				return installCmd
+			}(),
+			expectedErr: errors.New("invalid format for --set: key \"can't set this\" has no value"),
+		},
 	}
-	for _, val := range valuesConfig {
-		// parses Helm strvals line and merges into a map
-		err := strvals.ParseInto(val, expectedValues)
-		assert.Nil(err)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			actual, err := test.installCmd.resolveValues()
+			if err != nil && test.expectedErr != nil {
+				assert.Equal(err.Error(), test.expectedErr.Error())
+			} else {
+				assert.Equal(err, test.expectedErr)
+			}
+			assert.Equal(actual, test.expected)
+		})
 	}
-
-	vals, err := installCmd.resolveValues()
-	assert.Nil(err)
-
-	assert.True(reflect.DeepEqual(vals, expectedValues))
 }
 
 func TestEnforceSingleMesh(t *testing.T) {
@@ -587,8 +677,7 @@ func TestEnforceSingleMesh(t *testing.T) {
 		prometheusRetentionTime:     testRetentionTime,
 		meshName:                    defaultMeshName,
 		enableEgress:                true,
-		enablePrometheus:            true,
-		enableGrafana:               false,
+		deployGrafana:               false,
 		clientSet:                   fakeClientSet,
 		envoyLogLevel:               testEnvoyLogLevel,
 		enforceSingleMesh:           true,
@@ -645,8 +734,8 @@ func TestEnforceSingleMeshRejectsNewMesh(t *testing.T) {
 		prometheusRetentionTime:     testRetentionTime,
 		meshName:                    defaultMeshName + "-2",
 		enableEgress:                true,
-		enablePrometheus:            true,
-		enableGrafana:               false,
+		deployPrometheus:            true,
+		deployGrafana:               false,
 		clientSet:                   fakeClientSet,
 		envoyLogLevel:               testEnvoyLogLevel,
 	}
@@ -691,8 +780,8 @@ func TestEnforceSingleMeshWithExistingMesh(t *testing.T) {
 		prometheusRetentionTime:     testRetentionTime,
 		meshName:                    defaultMeshName + "-2",
 		enableEgress:                true,
-		enablePrometheus:            true,
-		enableGrafana:               false,
+		deployPrometheus:            true,
+		deployGrafana:               false,
 		clientSet:                   fakeClientSet,
 		envoyLogLevel:               testEnvoyLogLevel,
 		enforceSingleMesh:           true,
@@ -718,7 +807,7 @@ func createDeploymentSpec(namespace, meshName string) *v1.Deployment {
 	}
 }
 
-func getDefaultInstallCmd(writer *bytes.Buffer) installCmd {
+func getDefaultInstallCmd(writer io.Writer) installCmd {
 	installCmd := installCmd{
 		out:                            writer,
 		certificateManager:             defaultCertificateManager,
@@ -743,8 +832,9 @@ func getDefaultInstallCmd(writer *bytes.Buffer) installCmd {
 		enablePermissiveTrafficPolicy:  defaultEnablePermissiveTrafficPolicy,
 		clientSet:                      fake.NewSimpleClientset(),
 		enableBackpressureExperimental: defaultEnableBackpressureExperimental,
-		enablePrometheus:               defaultEnablePrometheus,
-		enableGrafana:                  defaultEnableGrafana,
+		deployPrometheus:               defaultDeployPrometheus,
+		enablePrometheusScraping:       defaultEnablePrometheusScraping,
+		deployGrafana:                  defaultDeployGrafana,
 		enableFluentbit:                defaultEnableFluentbit,
 		deployJaeger:                   defaultDeployJaeger,
 		enforceSingleMesh:              defaultEnforceSingleMesh,
@@ -756,38 +846,39 @@ func getDefaultInstallCmd(writer *bytes.Buffer) installCmd {
 func getDefaultValues() map[string]interface{} {
 	return map[string]interface{}{
 		"OpenServiceMesh": map[string]interface{}{
-			"certificateManager": "tresor",
+			"certificateManager": defaultCertificateManager,
 			"certmanager": map[string]interface{}{
-				"issuerKind":  "Issuer",
-				"issuerGroup": "cert-manager.io",
-				"issuerName":  "osm-ca",
+				"issuerKind":  defaultCertManagerIssuerKind,
+				"issuerGroup": defaultCertManagerIssuerGroup,
+				"issuerName":  defaultCertManagerIssuerName,
 			},
 			"meshName": defaultMeshName,
 			"image": map[string]interface{}{
-				"registry":   "openservicemesh",
-				"tag":        "v0.5.0",
+				"registry":   defaultContainerRegistry,
+				"tag":        defaultOsmImageTag,
 				"pullPolicy": defaultOsmImagePullPolicy,
 			},
-			"serviceCertValidityDuration": "24h",
+			"serviceCertValidityDuration": defaultServiceCertValidityDuration,
 			"vault": map[string]interface{}{
-				"host":     "",
-				"protocol": "http",
-				"token":    "",
-				"role":     "openservicemesh",
+				"host":     defaultVaultHost,
+				"protocol": defaultVaultProtocol,
+				"token":    defaultVaultToken,
+				"role":     defaultVaultRole,
 			},
 			"prometheus": map[string]interface{}{
 				"retention": map[string]interface{}{
-					"time": "15d",
+					"time": defaultPrometheusRetentionTime,
 				}},
-			"enableDebugServer":              false,
-			"enablePermissiveTrafficPolicy":  false,
-			"enableBackpressureExperimental": false,
-			"enableEgress":                   false,
-			"enablePrometheus":               true,
-			"enableGrafana":                  false,
-			"enableFluentbit":                false,
-			"deployJaeger":                   true,
+			"enableDebugServer":              defaultEnableDebugServer,
+			"enablePermissiveTrafficPolicy":  defaultEnablePermissiveTrafficPolicy,
+			"enableBackpressureExperimental": defaultEnableBackpressureExperimental,
+			"enableEgress":                   defaultEnableEgress,
+			"deployPrometheus":               defaultDeployPrometheus,
+			"enablePrometheusScraping":       defaultEnablePrometheusScraping,
+			"deployGrafana":                  defaultDeployGrafana,
+			"enableFluentbit":                defaultEnableFluentbit,
+			"deployJaeger":                   defaultDeployJaeger,
 			"envoyLogLevel":                  testEnvoyLogLevel,
-			"enforceSingleMesh":              false,
+			"enforceSingleMesh":              defaultEnforceSingleMesh,
 		}}
 }

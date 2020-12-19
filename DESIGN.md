@@ -306,9 +306,6 @@ type MeshCataloger interface {
 	// ListAllowedInboundServices lists the inbound services allowed to connect to the given service.
 	ListAllowedInboundServices(service.MeshService) ([]service.MeshService, error)
 
-	// ListAllowedOutboundServices lists the services the given service is allowed outbound connections to.
-	ListAllowedOutboundServices(service.MeshService) ([]service.MeshService, error)
-
 	// ListAllowedInboundServiceAccounts lists the downstream service accounts that can connect to the given service account
 	ListAllowedInboundServiceAccounts(service.K8sServiceAccount) ([]service.K8sServiceAccount, error)
 
@@ -346,8 +343,8 @@ type MeshCataloger interface {
 	//GetWeightedClusterForService returns the weighted cluster for a service
 	GetWeightedClusterForService(service service.MeshService) (service.WeightedCluster, error)
 
-	// GetIngressRoutesPerHost returns the HTTP routes per host associated with an ingress service
-	GetIngressRoutesPerHost(service.MeshService) (map[string][]trafficpolicy.HTTPRoute, error)
+	// GetIngressRoutesPerHost returns the HTTP route matches per host associated with an ingress service
+	GetIngressRoutesPerHost(service.MeshService) (map[string][]trafficpolicy.HTTPRouteMatch, error)
 }
 ```
 
@@ -537,6 +534,9 @@ type Certificater interface {
 
 	// GetExpiration() returns the expiration of the certificate
 	GetExpiration() time.Time
+
+ 	// GetSerialNumber returns the serial number of the given certificate.
+ 	GetSerialNumber() string
 }
 ```
 

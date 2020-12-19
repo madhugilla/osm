@@ -100,9 +100,9 @@ func createRoutes(routePolicyWeightedClustersMap map[string]trafficpolicy.RouteW
 	for _, routePolicyWeightedClusters := range routePolicyWeightedClustersMap {
 		// For a given route path, sanitize the methods in case there
 		// is wildcard or if there are duplicates
-		allowedMethods := sanitizeHTTPMethods(routePolicyWeightedClusters.HTTPRoute.Methods)
+		allowedMethods := sanitizeHTTPMethods(routePolicyWeightedClusters.HTTPRouteMatch.Methods)
 		for _, method := range allowedMethods {
-			route := getRoute(routePolicyWeightedClusters.HTTPRoute.PathRegex, method, routePolicyWeightedClusters.HTTPRoute.Headers, routePolicyWeightedClusters.WeightedClusters, 100, direction)
+			route := getRoute(routePolicyWeightedClusters.HTTPRouteMatch.PathRegex, method, routePolicyWeightedClusters.HTTPRouteMatch.Headers, routePolicyWeightedClusters.WeightedClusters, 100, direction)
 			routes = append(routes, route)
 		}
 	}
@@ -171,13 +171,13 @@ func getWeightedCluster(weightedClusters set.Set, totalClustersWeight int, direc
 	var total int
 	for clusterInterface := range weightedClusters.Iter() {
 		cluster := clusterInterface.(service.WeightedCluster)
-		clusterName := string(cluster.ClusterName)
+		clusterName := cluster.ClusterName.String()
 		total += cluster.Weight
 		if direction == InboundRoute {
 			// An inbound route is associated with a local cluster. The inbound route is applied
 			// on the destination cluster, and the destination clusters that accept inbound
 			// traffic have the name of the form 'someClusterName-local`.
-			clusterName += envoy.LocalClusterSuffix
+			clusterName = envoy.GetLocalClusterNameForServiceCluster(clusterName)
 		}
 		wc.Clusters = append(wc.Clusters, &xds_route.WeightedCluster_ClusterWeight{
 			Name:   clusterName,
@@ -263,8 +263,12 @@ func sanitizeHTTPMethods(allowedMethods []string) []string {
 //NewRouteConfigurationStub creates the route configuration placeholder
 func NewRouteConfigurationStub(routeConfigName string) *xds_route.RouteConfiguration {
 	routeConfiguration := xds_route.RouteConfiguration{
-		Name:             routeConfigName,
-		ValidateClusters: &wrappers.BoolValue{Value: true},
+		Name: routeConfigName,
+		// ValidateClusters `true` causes RDS rejections if the CDS is not "warm" with the expected
+		// clusters RDS wants to use. This can happen when CDS and RDS updates are sent closely
+		// together. Setting it to false bypasses this check, and just assumes the cluster will
+		// be present when it needs to be checked by traffic (or 404 otherwise).
+		ValidateClusters: &wrappers.BoolValue{Value: false},
 	}
 	return &routeConfiguration
 }

@@ -11,7 +11,14 @@ import (
 	"github.com/openservicemesh/osm/pkg/endpoint"
 	"github.com/openservicemesh/osm/pkg/ingress"
 	k8s "github.com/openservicemesh/osm/pkg/kubernetes"
+	"github.com/openservicemesh/osm/pkg/kubernetes/events"
 	"github.com/openservicemesh/osm/pkg/smi"
+)
+
+const (
+	// this is catalog's tick rate for ticker, which triggers global proxy updates
+	// 0 disables the ticker
+	updateAtLeastEvery = 0 * time.Second
 )
 
 // NewMeshCatalog creates a new service catalog
@@ -31,7 +38,10 @@ func NewMeshCatalog(kubeController k8s.Controller, kubeClient kubernetes.Interfa
 		kubeController: kubeController,
 	}
 
-	go mc.repeater()
+	// Run release certificate handler, which listens to podDelete events
+	mc.releaseCertificateHandler()
+
+	go mc.dispatcher()
 	return &mc
 }
 
@@ -50,22 +60,19 @@ func (mc *MeshCatalog) getAnnouncementChannels() []announcementChannel {
 		{"Services", mc.kubeController.GetAnnouncementsChannel(k8s.Services)},
 	}
 
-	// There could be many Endpoint Providers - iterate over all of them!
-	for _, ep := range mc.endpointsProviders {
-		annCh := announcementChannel{ep.GetID(), ep.GetAnnouncementsChannel()}
-		announcementChannels = append(announcementChannels, annCh)
+	if updateAtLeastEvery > 0 {
+		go func() {
+			ticker := time.NewTicker(updateAtLeastEvery)
+			for {
+				<-ticker.C
+				events.GetPubSubInstance().Publish(events.PubSubMessage{
+					AnnouncementType: announcements.ScheduleProxyBroadcast,
+					NewObj:           nil,
+					OldObj:           nil,
+				})
+			}
+		}()
 	}
-
-	// TODO(draychev): Ticker Announcement channel should be made optional
-	// with osm-config configurable interval
-	// See Github Issue: https://github.com/openservicemesh/osm/issues/1501
-	go func() {
-		ticker := time.NewTicker(updateAtLeastEvery)
-		for {
-			<-ticker.C
-			ticking <- announcements.Announcement{}
-		}
-	}()
 
 	return announcementChannels
 }

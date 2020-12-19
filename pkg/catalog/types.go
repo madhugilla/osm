@@ -47,6 +47,9 @@ type MeshCatalog struct {
 	// calls through kubeClient and instead relies on background cache synchronization and local
 	// lookups
 	kubeController k8s.Controller
+
+	// Maintain a mapping of pod UID to CN of the Envoy on that pod
+	podUIDToCN sync.Map
 }
 
 // MeshCataloger is the mechanism by which the Service Mesh controller discovers all Envoy proxies connected to the catalog.
@@ -57,11 +60,14 @@ type MeshCataloger interface {
 	// ListTrafficPolicies returns all the traffic policies for a given service that Envoy proxy should be aware of.
 	ListTrafficPolicies(service.MeshService) ([]trafficpolicy.TrafficTarget, error)
 
+	// ListTrafficPoliciesForServiceAccount returns all inbound and outbound traffic policies related to the given service account
+	ListTrafficPoliciesForServiceAccount(service.K8sServiceAccount) ([]*trafficpolicy.InboundTrafficPolicy, []*trafficpolicy.OutboundTrafficPolicy, error)
+
 	// ListAllowedInboundServices lists the inbound services allowed to connect to the given service.
 	ListAllowedInboundServices(service.MeshService) ([]service.MeshService, error)
 
-	// ListAllowedOutboundServices lists the services the given service is allowed outbound connections to.
-	ListAllowedOutboundServices(service.MeshService) ([]service.MeshService, error)
+	// ListAllowedOutboundServicesForIdentity list the services the given service account is allowed to initiate outbound connections to
+	ListAllowedOutboundServicesForIdentity(service.K8sServiceAccount) []service.MeshService
 
 	// ListAllowedInboundServiceAccounts lists the downstream service accounts that can connect to the given service account
 	ListAllowedInboundServiceAccounts(service.K8sServiceAccount) ([]service.K8sServiceAccount, error)
@@ -105,11 +111,17 @@ type MeshCataloger interface {
 	//GetWeightedClusterForService returns the weighted cluster for a service
 	GetWeightedClusterForService(service service.MeshService) (service.WeightedCluster, error)
 
-	// GetIngressRoutesPerHost returns the HTTP routes per host associated with an ingress service
-	GetIngressRoutesPerHost(service.MeshService) (map[string][]trafficpolicy.HTTPRoute, error)
+	// GetIngressRoutesPerHost returns the HTTP route matches per host associated with an ingress service
+	GetIngressRoutesPerHost(service.MeshService) (map[string][]trafficpolicy.HTTPRouteMatch, error)
 
 	// ListMonitoredNamespaces lists namespaces monitored by the control plane
 	ListMonitoredNamespaces() []string
+
+	// GetPortToProtocolMappingForService returns a mapping of the service's ports to their corresponding application protocol
+	GetPortToProtocolMappingForService(service.MeshService) (map[uint32]string, error)
+
+	// ListInboundTrafficTargetsWithRoutes returns a list traffic target objects componsed of its routes for the given destination service account
+	ListInboundTrafficTargetsWithRoutes(service.K8sServiceAccount) ([]trafficpolicy.TrafficTargetWithRoutes, error)
 }
 
 type announcementChannel struct {

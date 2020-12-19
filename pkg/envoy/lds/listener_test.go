@@ -1,7 +1,6 @@
 package lds
 
 import (
-	"net"
 	"testing"
 
 	xds_core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -12,13 +11,10 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/openservicemesh/osm/pkg/catalog"
 	"github.com/openservicemesh/osm/pkg/configurator"
 	"github.com/openservicemesh/osm/pkg/constants"
-	"github.com/openservicemesh/osm/pkg/endpoint"
 	"github.com/openservicemesh/osm/pkg/envoy"
 	"github.com/openservicemesh/osm/pkg/envoy/route"
-	"github.com/openservicemesh/osm/pkg/tests"
 )
 
 // Tests TestGetFilterForService checks that a proper filter type is properly returned
@@ -28,13 +24,16 @@ func TestGetFilterForService(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 
 	mockConfigurator := configurator.NewMockConfigurator(mockCtrl)
+	lb := &listenerBuilder{
+		cfg: mockConfigurator,
+	}
 
 	mockConfigurator.EXPECT().IsPermissiveTrafficPolicyMode().Return(false)
 	mockConfigurator.EXPECT().IsTracingEnabled().Return(true)
 	mockConfigurator.EXPECT().GetTracingEndpoint().Return("test-endpoint")
 
 	// Check we get HTTP connection manager filter without Permissive mode
-	filter, err := getOutboundFilterForService(tests.BookbuyerService, mockConfigurator)
+	filter, err := lb.getOutboundHTTPFilter()
 
 	assert.NoError(err)
 	assert.Equal(filter.Name, wellknown.HTTPConnectionManager)
@@ -44,48 +43,9 @@ func TestGetFilterForService(t *testing.T) {
 	mockConfigurator.EXPECT().IsTracingEnabled().Return(true)
 	mockConfigurator.EXPECT().GetTracingEndpoint().Return("test-endpoint")
 
-	filter, err = getOutboundFilterForService(tests.BookbuyerService, mockConfigurator)
+	filter, err = lb.getOutboundHTTPFilter()
 	assert.NoError(err)
 	assert.Equal(filter.Name, wellknown.HTTPConnectionManager)
-}
-
-// Tests TestGetFilterChainMatchForService checks that a proper filter chain match is returned
-// for a given service
-func TestGetFilterChainMatchForService(t *testing.T) {
-	assert := assert.New(t)
-	mockCtrl := gomock.NewController(t)
-
-	mockConfigurator := configurator.NewMockConfigurator(mockCtrl)
-	mockCatalog := catalog.NewMockMeshCataloger(mockCtrl)
-
-	mockCatalog.EXPECT().GetResolvableServiceEndpoints(tests.BookbuyerService).Return(
-		[]endpoint.Endpoint{
-			tests.Endpoint,
-			{
-				// Adding another IP to test multiple-endpoint filter chain
-				IP: net.IPv4(192, 168, 0, 1),
-			},
-		},
-		nil,
-	)
-
-	filterChainMatch, err := getOutboundFilterChainMatchForService(tests.BookbuyerService, mockCatalog, mockConfigurator)
-
-	assert.NoError(err)
-	assert.Equal(filterChainMatch.PrefixRanges[0].GetAddressPrefix(), tests.Endpoint.IP.String())
-	assert.Equal(filterChainMatch.PrefixRanges[0].GetPrefixLen().GetValue(), uint32(32))
-	assert.Equal(filterChainMatch.PrefixRanges[1].GetAddressPrefix(), net.IPv4(192, 168, 0, 1).String())
-	assert.Equal(filterChainMatch.PrefixRanges[1].GetPrefixLen().GetValue(), uint32(32))
-
-	// Test negative getOutboundFilterChainMatchForService when no endpoints are present
-	mockCatalog.EXPECT().GetResolvableServiceEndpoints(tests.BookbuyerService).Return(
-		[]endpoint.Endpoint{},
-		nil,
-	)
-
-	filterChainMatch, err = getOutboundFilterChainMatchForService(tests.BookbuyerService, mockCatalog, mockConfigurator)
-	assert.NoError(err)
-	assert.Nil(filterChainMatch)
 }
 
 var _ = Describe("Construct inbound listeners", func() {
@@ -105,7 +65,7 @@ var _ = Describe("Construct inbound listeners", func() {
 		It("Tests the inbound listener config", func() {
 			listener := newInboundListener()
 			Expect(listener.Address).To(Equal(envoy.GetAddress(constants.WildcardIPAddr, constants.EnvoyInboundListenerPort)))
-			Expect(len(listener.ListenerFilters)).To(Equal(1)) // tls-inspector listener filter
+			Expect(len(listener.ListenerFilters)).To(Equal(2)) // TlsInspector, OriginalDestination listener filter
 			Expect(listener.ListenerFilters[0].Name).To(Equal(wellknown.TlsInspector))
 			Expect(listener.TrafficDirection).To(Equal(xds_core.TrafficDirection_INBOUND))
 		})

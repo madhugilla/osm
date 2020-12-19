@@ -13,7 +13,6 @@ import (
 	testclient "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/openservicemesh/osm/pkg/announcements"
-	"github.com/openservicemesh/osm/pkg/certificate"
 	"github.com/openservicemesh/osm/pkg/certificate/providers/tresor"
 	"github.com/openservicemesh/osm/pkg/configurator"
 	"github.com/openservicemesh/osm/pkg/endpoint"
@@ -25,7 +24,11 @@ import (
 	"github.com/openservicemesh/osm/pkg/tests"
 )
 
-func newFakeMeshCatalogForRoutes(t *testing.T) *MeshCatalog {
+type testParams struct {
+	permissiveMode bool
+}
+
+func newFakeMeshCatalogForRoutes(t *testing.T, testParams testParams) *MeshCatalog {
 	mockCtrl := gomock.NewController(t)
 	kubeClient := testclient.NewSimpleClientset()
 
@@ -39,8 +42,7 @@ func newFakeMeshCatalogForRoutes(t *testing.T) *MeshCatalog {
 	}
 	stop := make(chan struct{})
 
-	cache := make(map[certificate.CommonName]certificate.Certificater)
-	certManager := tresor.NewFakeCertManager(&cache, mockConfigurator)
+	certManager := tresor.NewFakeCertManager(mockConfigurator)
 
 	// Create a bookstoreV1 pod
 	bookstoreV1Pod := tests.NewPodTestFixtureWithOptions(tests.BookstoreV1Service.Namespace, tests.BookstoreV1Service.Name, tests.BookstoreServiceAccountName)
@@ -126,6 +128,8 @@ func newFakeMeshCatalogForRoutes(t *testing.T) *MeshCatalog {
 	mockKubeController.EXPECT().IsMonitoredNamespace(tests.BookstoreV2Service.Namespace).Return(true).AnyTimes()
 	mockKubeController.EXPECT().IsMonitoredNamespace(tests.BookbuyerService.Namespace).Return(true).AnyTimes()
 	mockKubeController.EXPECT().ListMonitoredNamespaces().Return(listExpectedNs, nil).AnyTimes()
+
+	mockConfigurator.EXPECT().IsPermissiveTrafficPolicyMode().Return(testParams.permissiveMode).AnyTimes()
 
 	mockMeshSpec.EXPECT().GetAnnouncementsChannel().Return(announcementsChan).AnyTimes()
 	mockMeshSpec.EXPECT().ListTrafficTargets().Return([]*target.TrafficTarget{&tests.TrafficTarget}).AnyTimes()
