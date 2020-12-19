@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: osm-controller
+  namespace: {{ include "osm.namespace" . }}
   labels:
     app: osm-controller
     meshName: {{ .Values.OpenServiceMesh.meshName }}
@@ -29,7 +30,7 @@ spec:
           command: ['/osm-controller']
           args: [
             "--verbosity", "{{.Values.OpenServiceMesh.controllerLogLevel}}",
-            "--osm-namespace", "{{.Release.Namespace}}",
+            "--osm-namespace", "{{ include "osm.namespace" . }}",
             "--mesh-name", "{{.Values.OpenServiceMesh.meshName}}",
             "--init-container-image", "{{.Values.OpenServiceMesh.image.registry}}/init:{{ .Values.OpenServiceMesh.image.tag }}",
             "--sidecar-image", "{{.Values.OpenServiceMesh.sidecarImage}}",
@@ -76,9 +77,27 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
       {{- if .Values.OpenServiceMesh.enableFluentbit }}
-        - name: {{ .Values.OpenServiceMesh.fluentBitImage.name }}
-          image: {{ .Values.OpenServiceMesh.fluentBitImage.registry }}/fluent-bit:{{ .Values.OpenServiceMesh.fluentBitImage.tag }}
-          imagePullPolicy: {{ .Values.OpenServiceMesh.fluentBitImage.pullPolicy }}
+        - name: {{ .Values.OpenServiceMesh.fluentBit.name }}
+          image: {{ .Values.OpenServiceMesh.fluentBit.registry }}/fluent-bit:{{ .Values.OpenServiceMesh.fluentBit.tag }}
+          imagePullPolicy: {{ .Values.OpenServiceMesh.fluentBit.pullPolicy }}
+          env:
+          {{- if .Values.OpenServiceMesh.fluentBit.enableProxySupport }}
+          - name: HTTP_PROXY
+            valueFrom:
+              secretKeyRef:
+                name: proxy-config
+                key: HTTP_PROXY
+          - name: HTTPS_PROXY
+            valueFrom:
+              secretKeyRef:
+                name: proxy-config
+                key: HTTPS_PROXY
+          {{- end }}
+          - name: CONTROLLER_POD_NAME
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: metadata.name
           volumeMounts:
           - name: config
             mountPath: /fluent-bit/etc

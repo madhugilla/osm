@@ -6,7 +6,7 @@ OpenServiceMesh:
   image:
     registry: openservicemesh
     pullPolicy: IfNotPresent
-    tag: v0.5.0
+    tag: v0.6.0
   imagePullSecrets: []
   sidecarImage: envoyproxy/envoy-alpine:v1.15.0
   prometheus:
@@ -28,27 +28,38 @@ OpenServiceMesh:
   caBundleSecretName: osm-ca-bundle
   grafana:
     port: 3000
+    enableRemoteRendering: false
 
   enableDebugServer: false
   enablePermissiveTrafficPolicy: false
   enableBackpressureExperimental: false
   enableEgress: false
-  enablePrometheus: true
-  enableGrafana: false
+  deployPrometheus: false
+  enablePrometheusScraping: true
+  deployGrafana: false
   enableFluentbit: false
-  fluentBitImage:
+  fluentBit:
     name: fluentbit-logger
     registry: fluent
-    tag: 1.5
+    tag: 1.6.4
     pullPolicy: IfNotPresent
+    logLevel: error
+    outputPlugin: stdout
+    workspaceId: ""
+    primaryKey: ""
+    enableProxySupport: false
+    httpProxy: ""
+    httpsProxy: ""
   meshName: osm
   useHTTPSIngress: false
   envoyLogLevel: error
   controllerLogLevel: trace
   enforceSingleMesh: false
-  customLogAnalyticsWorkspace: true
-  fluentbitOutput: stdout
   webhookConfigNamePrefix: osm-webhook
+
+  # Optional parameter. If not specified, the release namespace is 
+  # used to deploy the osm components.
+  osmNamespace: ""
 
   # Set deployJaeger to true to deploy a Jaeger cluster in the
   # namespace where OSM resides.

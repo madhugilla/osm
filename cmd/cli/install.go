@@ -63,7 +63,7 @@ const (
 	defaultContainerRegistrySecret        = ""
 	defaultMeshName                       = "osm"
 	defaultOsmImagePullPolicy             = "IfNotPresent"
-	defaultOsmImageTag                    = "v0.5.0"
+	defaultOsmImageTag                    = "v0.6.0"
 	defaultPrometheusRetentionTime        = constants.PrometheusDefaultRetentionTime
 	defaultVaultHost                      = ""
 	defaultVaultProtocol                  = "http"
@@ -75,8 +75,9 @@ const (
 	defaultEnableEgress                   = false
 	defaultEnablePermissiveTrafficPolicy  = false
 	defaultEnableBackpressureExperimental = false
-	defaultEnablePrometheus               = true
-	defaultEnableGrafana                  = false
+	defaultDeployPrometheus               = false
+	defaultEnablePrometheusScraping       = true
+	defaultDeployGrafana                  = false
 	defaultEnableFluentbit                = false
 	defaultDeployJaeger                   = true
 	defaultEnforceSingleMesh              = false
@@ -111,16 +112,20 @@ type installCmd struct {
 	enablePermissiveTrafficPolicy bool
 	clientSet                     kubernetes.Interface
 	chartRequested                *chart.Chart
+	setOptions                    []string
 
 	// This is an experimental flag, which will eventually
 	// become part of SMI Spec.
 	enableBackpressureExperimental bool
 
 	// Toggle to enable/disable Prometheus installation
-	enablePrometheus bool
+	deployPrometheus bool
+
+	// Toggle to enable/disable Prometheus scraping
+	enablePrometheusScraping bool
 
 	// Toggle to enable/disable Grafana installation
-	enableGrafana bool
+	deployGrafana bool
 
 	// Toggle to enable/disable FluentBit sidecar
 	enableFluentbit bool
@@ -176,14 +181,16 @@ func newInstallCmd(config *helm.Configuration, out io.Writer) *cobra.Command {
 	f.BoolVar(&inst.enablePermissiveTrafficPolicy, "enable-permissive-traffic-policy", defaultEnablePermissiveTrafficPolicy, "Enable permissive traffic policy mode")
 	f.BoolVar(&inst.enableEgress, "enable-egress", defaultEnableEgress, "Enable egress in the mesh")
 	f.BoolVar(&inst.enableBackpressureExperimental, "enable-backpressure-experimental", defaultEnableBackpressureExperimental, "Enable experimental backpressure feature")
-	f.BoolVar(&inst.enablePrometheus, "enable-prometheus", defaultEnablePrometheus, "Enable Prometheus installation and deployment")
-	f.BoolVar(&inst.enableGrafana, "enable-grafana", defaultEnableGrafana, "Enable Grafana installation and deployment")
+	f.BoolVar(&inst.deployPrometheus, "deploy-prometheus", defaultDeployPrometheus, "Install and deploy Prometheus")
+	f.BoolVar(&inst.enablePrometheusScraping, "enable-prometheus-scraping", defaultEnablePrometheusScraping, "Enable Prometheus metrics scraping on sidecar proxies")
+	f.BoolVar(&inst.deployGrafana, "deploy-grafana", defaultDeployGrafana, "Install and deploy Grafana")
 	f.BoolVar(&inst.enableFluentbit, "enable-fluentbit", defaultEnableFluentbit, "Enable Fluentbit sidecar deployment")
 	f.StringVar(&inst.meshName, "mesh-name", defaultMeshName, "name for the new control plane instance")
 	f.BoolVar(&inst.deployJaeger, "deploy-jaeger", defaultDeployJaeger, "Deploy Jaeger in the namespace of the OSM controller")
 	f.StringVar(&inst.envoyLogLevel, "envoy-log-level", defaultEnvoyLogLevel, "Envoy log level is used to specify the level of logs collected from envoy and needs to be one of these (trace, debug, info, warning, warn, error, critical, off)")
 	f.BoolVar(&inst.enforceSingleMesh, "enforce-single-mesh", defaultEnforceSingleMesh, "Enforce only deploying one mesh in the cluster")
 	f.DurationVar(&inst.timeout, "timeout", 5*time.Minute, "Time to wait for installation and resources in a ready state, zero means no timeout")
+	f.StringArrayVar(&inst.setOptions, "set", nil, "Set arbitrary chart values values not settable by another flag (can specify multiple or separate values with commas: key1=val1,key2=val2)")
 
 	return cmd
 }
@@ -229,6 +236,14 @@ func (i *installCmd) loadOSMChart() error {
 
 func (i *installCmd) resolveValues() (map[string]interface{}, error) {
 	finalValues := map[string]interface{}{}
+
+	for _, val := range i.setOptions {
+		// parses Helm strvals line and merges into a map for the final overrides for values.yaml
+		if err := strvals.ParseInto(val, finalValues); err != nil {
+			return nil, errors.Wrap(err, "invalid format for --set")
+		}
+	}
+
 	valuesConfig := []string{
 		fmt.Sprintf("OpenServiceMesh.image.registry=%s", i.containerRegistry),
 		fmt.Sprintf("OpenServiceMesh.image.tag=%s", i.osmImageTag),
@@ -246,8 +261,9 @@ func (i *installCmd) resolveValues() (map[string]interface{}, error) {
 		fmt.Sprintf("OpenServiceMesh.enableDebugServer=%t", i.enableDebugServer),
 		fmt.Sprintf("OpenServiceMesh.enablePermissiveTrafficPolicy=%t", i.enablePermissiveTrafficPolicy),
 		fmt.Sprintf("OpenServiceMesh.enableBackpressureExperimental=%t", i.enableBackpressureExperimental),
-		fmt.Sprintf("OpenServiceMesh.enablePrometheus=%t", i.enablePrometheus),
-		fmt.Sprintf("OpenServiceMesh.enableGrafana=%t", i.enableGrafana),
+		fmt.Sprintf("OpenServiceMesh.deployPrometheus=%t", i.deployPrometheus),
+		fmt.Sprintf("OpenServiceMesh.enablePrometheusScraping=%t", i.enablePrometheusScraping),
+		fmt.Sprintf("OpenServiceMesh.deployGrafana=%t", i.deployGrafana),
 		fmt.Sprintf("OpenServiceMesh.enableFluentbit=%t", i.enableFluentbit),
 		fmt.Sprintf("OpenServiceMesh.meshName=%s", i.meshName),
 		fmt.Sprintf("OpenServiceMesh.enableEgress=%t", i.enableEgress),
@@ -266,6 +282,7 @@ func (i *installCmd) resolveValues() (map[string]interface{}, error) {
 			return nil, err
 		}
 	}
+
 	return finalValues, nil
 }
 
@@ -346,7 +363,13 @@ func (i *installCmd) validateOptions() error {
 	// Enforce single mesh cluster if needed
 	if i.enforceSingleMesh {
 		if len(list.Items) != 0 {
-			return errors.Errorf("Meshes already exist in cluster. Cannot enforce single mesh cluster. ")
+			return errors.Errorf("Meshes already exist in cluster. Cannot enforce single mesh cluster.")
+		}
+	}
+
+	if i.deployPrometheus {
+		if !i.enablePrometheusScraping {
+			fmt.Fprintf(i.out, "Prometheus scraping is disabled. To enable it, set prometheus_scraping in %s/%s to true.\n", settings.Namespace(), constants.OSMConfigMap)
 		}
 	}
 

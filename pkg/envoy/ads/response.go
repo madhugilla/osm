@@ -65,6 +65,12 @@ func makeRequestForAllSecrets(proxy *envoy.Proxy, meshCatalog catalog.MeshCatalo
 	// Github Issue #1575
 	serviceForProxy := svcList[0]
 
+	proxyIdentity, err := catalog.GetServiceAccountFromProxyCertificate(proxy.GetCommonName())
+	if err != nil {
+		log.Error().Err(err).Msgf("Error looking up proxy identity for proxy with CN=%q", proxy.GetCommonName())
+		return nil
+	}
+
 	discoveryRequest := &xds_discovery.DiscoveryRequest{
 		ResourceNames: []string{
 			envoy.SDSCert{
@@ -84,11 +90,7 @@ func makeRequestForAllSecrets(proxy *envoy.Proxy, meshCatalog catalog.MeshCatalo
 	}
 
 	// There is an SDS validation cert corresponding to each upstream service
-	upstreamServices, err := meshCatalog.ListAllowedOutboundServices(serviceForProxy)
-	if err != nil {
-		log.Error().Err(err).Msgf("Error listing outbound services for proxy %q", serviceForProxy)
-		return nil
-	}
+	upstreamServices := meshCatalog.ListAllowedOutboundServicesForIdentity(proxyIdentity)
 	for _, upstream := range upstreamServices {
 		upstreamRootCertResource := envoy.SDSCert{
 			MeshService: upstream,
@@ -115,7 +117,13 @@ func (s *Server) newAggregatedDiscoveryResponse(proxy *envoy.Proxy, request *xds
 		s.xdsLog[proxy.GetCommonName()][typeURL] = append(s.xdsLog[proxy.GetCommonName()][typeURL], time.Now())
 	}
 
-	log.Trace().Msgf("Invoking handler for %s with request: %+v", typeURL, request)
+	// request.Node is only available on the first Discovery Request; will be nil on the following
+	nodeID := ""
+	if request.Node != nil {
+		nodeID = request.Node.Id
+	}
+
+	log.Trace().Msgf("Invoking handler for type %s; request from Envoy with Node ID %s", typeURL, nodeID)
 	response, err := handler(s.catalog, proxy, request, cfg, s.certManager)
 	if err != nil {
 		log.Error().Msgf("Responder for TypeUrl %s is not implemented", request.TypeUrl)
