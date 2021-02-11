@@ -19,7 +19,7 @@ const (
 	// How many bits to use for the RSA key
 	rsaBits = 4096
 
-	// checkCertificateExpirationInterval is the interval to check wether a
+	// checkCertificateExpirationInterval is the interval to check whether a
 	// certificate is close to expiration and needs renewal.
 	checkCertificateExpirationInterval = 5 * time.Second
 )
@@ -62,6 +62,9 @@ type CertManager struct {
 type Certificate struct {
 	// The commonName of the certificate
 	commonName certificate.CommonName
+
+	// The serial number of the certificate
+	serialNumber certificate.SerialNumber
 
 	// When the cert expires
 	expiration time.Time

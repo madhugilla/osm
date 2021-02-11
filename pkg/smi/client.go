@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	smiAccess "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha2"
-	smiSpecs "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/specs/v1alpha3"
+	smiAccess "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha3"
+	smiSpecs "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/specs/v1alpha4"
 	smiSplit "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/split/v1alpha2"
 	smiAccessClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/access/clientset/versioned"
 	smiAccessInformers "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/access/informers/externalversions"
@@ -112,9 +112,9 @@ func newSMIClient(kubeClient kubernetes.Interface, smiTrafficSplitClient smiTraf
 
 	informerCollection := InformerCollection{
 		TrafficSplit:   smiTrafficSplitInformerFactory.Split().V1alpha2().TrafficSplits().Informer(),
-		HTTPRouteGroup: smiTrafficSpecInformerFactory.Specs().V1alpha3().HTTPRouteGroups().Informer(),
-		TCPRoute:       smiTrafficSpecInformerFactory.Specs().V1alpha3().TCPRoutes().Informer(),
-		TrafficTarget:  smiTrafficTargetInformerFactory.Access().V1alpha2().TrafficTargets().Informer(),
+		HTTPRouteGroup: smiTrafficSpecInformerFactory.Specs().V1alpha4().HTTPRouteGroups().Informer(),
+		TCPRoute:       smiTrafficSpecInformerFactory.Specs().V1alpha4().TCPRoutes().Informer(),
+		TrafficTarget:  smiTrafficTargetInformerFactory.Access().V1alpha3().TrafficTargets().Informer(),
 	}
 
 	cacheCollection := CacheCollection{
@@ -150,28 +150,28 @@ func newSMIClient(kubeClient kubernetes.Interface, smiTrafficSplitClient smiTraf
 		Update: a.TrafficSplitUpdated,
 		Delete: a.TrafficSplitDeleted,
 	}
-	informerCollection.TrafficSplit.AddEventHandler(k8s.GetKubernetesEventHandlers("TrafficSplit", "SMI", client.announcements, shouldObserve, nil, splitEventTypes))
+	informerCollection.TrafficSplit.AddEventHandler(k8s.GetKubernetesEventHandlers("TrafficSplit", "SMI", shouldObserve, splitEventTypes))
 
 	routeGroupEventTypes := k8s.EventTypes{
 		Add:    a.RouteGroupAdded,
 		Update: a.RouteGroupUpdated,
 		Delete: a.RouteGroupDeleted,
 	}
-	informerCollection.HTTPRouteGroup.AddEventHandler(k8s.GetKubernetesEventHandlers("HTTPRouteGroup", "SMI", client.announcements, shouldObserve, nil, routeGroupEventTypes))
+	informerCollection.HTTPRouteGroup.AddEventHandler(k8s.GetKubernetesEventHandlers("HTTPRouteGroup", "SMI", shouldObserve, routeGroupEventTypes))
 
 	tcpRouteEventTypes := k8s.EventTypes{
 		Add:    a.TCPRouteAdded,
 		Update: a.TCPRouteUpdated,
 		Delete: a.TCPRouteDeleted,
 	}
-	informerCollection.TCPRoute.AddEventHandler(k8s.GetKubernetesEventHandlers("TCPRoute", "SMI", client.announcements, shouldObserve, nil, tcpRouteEventTypes))
+	informerCollection.TCPRoute.AddEventHandler(k8s.GetKubernetesEventHandlers("TCPRoute", "SMI", shouldObserve, tcpRouteEventTypes))
 
 	trafficTargetEventTypes := k8s.EventTypes{
 		Add:    a.TrafficTargetAdded,
 		Update: a.TrafficTargetUpdated,
 		Delete: a.TrafficTargetDeleted,
 	}
-	informerCollection.TrafficTarget.AddEventHandler(k8s.GetKubernetesEventHandlers("TrafficTarget", "SMI", client.announcements, shouldObserve, nil, trafficTargetEventTypes))
+	informerCollection.TrafficTarget.AddEventHandler(k8s.GetKubernetesEventHandlers("TrafficTarget", "SMI", shouldObserve, trafficTargetEventTypes))
 
 	if featureflags.IsBackpressureEnabled() {
 		backpressureEventTypes := k8s.EventTypes{
@@ -179,7 +179,7 @@ func newSMIClient(kubeClient kubernetes.Interface, smiTrafficSplitClient smiTraf
 			Update: a.BackpressureUpdated,
 			Delete: a.BackpressureDeleted,
 		}
-		informerCollection.Backpressure.AddEventHandler(k8s.GetKubernetesEventHandlers("Backpressure", "SMI", client.announcements, shouldObserve, nil, backpressureEventTypes))
+		informerCollection.Backpressure.AddEventHandler(k8s.GetKubernetesEventHandlers("Backpressure", "SMI", shouldObserve, backpressureEventTypes))
 	}
 
 	err := client.run(stop)
@@ -260,7 +260,7 @@ func (c *Client) ListTrafficTargets() []*smiAccess.TrafficTarget {
 // GetBackpressurePolicy gets the Backpressure policy corresponding to the MeshService
 func (c *Client) GetBackpressurePolicy(svc service.MeshService) *osmPolicy.Backpressure {
 	if !featureflags.IsBackpressureEnabled() {
-		log.Info().Msgf("Backpressure turned off!")
+		log.Debug().Msgf("Backpressure turned off!")
 		return nil
 	}
 

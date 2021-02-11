@@ -21,7 +21,7 @@ BUILD_GITCOMMIT_VAR := github.com/openservicemesh/osm/pkg/version.GitCommit
 LDFLAGS ?= "-X $(BUILD_DATE_VAR)=$(BUILD_DATE) -X $(BUILD_VERSION_VAR)=$(VERSION) -X $(BUILD_GITCOMMIT_VAR)=$(GIT_SHA) -X main.chartTGZSource=$$(cat -) -s -w"
 
 # These two values are combined and passed to go test
-E2E_FLAGS ?= -kindCluster
+E2E_FLAGS ?= -installType=KindCluster
 E2E_FLAGS_DEFAULT := -test.v -ginkgo.v -ginkgo.progress -ctrRegistry $(CTR_REGISTRY) -osmImageTag $(CTR_TAG)
 
 check-env:
@@ -57,7 +57,11 @@ clean-osm:
 
 .PHONY: chart-readme
 chart-readme:
-	go run github.com/norwoodj/helm-docs/cmd/helm-docs -c charts
+	go run github.com/norwoodj/helm-docs/cmd/helm-docs -c charts -t charts/osm/README.md.gotmpl
+
+.PHONY: chart-checks
+chart-checks: chart-readme
+	@git diff --exit-code charts/osm/README.md || { echo "----- Please commit the changes made by 'make chart-readme' -----"; exit 1; }
 
 .PHONY: go-checks
 go-checks: go-lint go-fmt go-mod-tidy
@@ -127,7 +131,7 @@ $(DOCKER_DEMO_TARGETS):
 	docker build -t $(CTR_REGISTRY)/$(NAME):$(CTR_TAG) -f dockerfiles/Dockerfile.$(NAME) demo/bin/$(NAME)
 
 docker-build-init:
-	docker build -t $(CTR_REGISTRY)/init:$(CTR_TAG) -f dockerfiles/Dockerfile.init init
+	docker build -t $(CTR_REGISTRY)/init:$(CTR_TAG) - < dockerfiles/Dockerfile.init
 
 docker-build-osm-controller: build-osm-controller
 	docker build -t $(CTR_REGISTRY)/osm-controller:$(CTR_TAG) -f dockerfiles/Dockerfile.osm-controller bin/osm-controller
@@ -137,11 +141,11 @@ docker-build: $(DOCKER_DEMO_TARGETS) docker-build-init docker-build-osm-controll
 
 # docker-push-bookbuyer, etc
 DOCKER_PUSH_TARGETS = $(addprefix docker-push-, $(DEMO_TARGETS) init osm-controller)
+VERIFY_TAGS = 0
 .PHONY: $(DOCKER_PUSH_TARGETS)
 $(DOCKER_PUSH_TARGETS): NAME=$(@:docker-push-%=%)
 $(DOCKER_PUSH_TARGETS):
-	make docker-build-$(NAME)
-	docker push "$(CTR_REGISTRY)/$(NAME):$(CTR_TAG)" || { echo "Error pushing images to container registry $(CTR_REGISTRY)/$(NAME):$(CTR_TAG)"; exit 1; }
+	@if [ $(VERIFY_TAGS) != 1 ]; then make docker-build-$(NAME); docker push "$(CTR_REGISTRY)/$(NAME):$(CTR_TAG)" || { echo "Error pushing images to container registry $(CTR_REGISTRY)/$(NAME):$(CTR_TAG)"; exit 1; }; else bash scripts/publish-image.sh $(NAME); fi
 
 .PHONY: docker-push
 docker-push: $(DOCKER_PUSH_TARGETS)

@@ -16,6 +16,9 @@ spec:
     metadata:
       labels:
         app: osm-controller
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '9091'
     spec:
       serviceAccountName: {{ .Release.Name }}
       containers:
@@ -27,6 +30,8 @@ spec:
               containerPort: 15000
             - name: "osm-port"
               containerPort: 15128
+            - name: "metrics"
+              containerPort: 9091
           command: ['/osm-controller']
           args: [
             "--verbosity", "{{.Values.OpenServiceMesh.controllerLogLevel}}",
@@ -37,7 +42,7 @@ spec:
             "--webhook-config-name", "{{.Values.OpenServiceMesh.webhookConfigNamePrefix}}-{{.Values.OpenServiceMesh.meshName}}",
             "--ca-bundle-secret-name", "{{.Values.OpenServiceMesh.caBundleSecretName}}",
             "--certificate-manager", "{{.Values.OpenServiceMesh.certificateManager}}",
-            {{- if .Values.OpenServiceMesh.connectVault }}
+            {{ if eq .Values.OpenServiceMesh.certificateManager "vault" }}
             "--vault-host", "{{.Values.OpenServiceMesh.vault.host}}",
             "--vault-protocol", "{{.Values.OpenServiceMesh.vault.protocol}}",
             "--vault-token", "{{.Values.OpenServiceMesh.vault.token}}",
@@ -48,14 +53,17 @@ spec:
             {{- if .Values.OpenServiceMesh.enableBackpressureExperimental }}
             "--enable-backpressure-experimental",
             {{- end }}
+            {{- if .Values.OpenServiceMesh.enableRoutesV2Experimental }}
+            "--enable-routes-v2-experimental",
+            {{- end }}
           ]
           resources:
             limits:
-              cpu: 1.5
-              memory: 256M
+              cpu: "{{.Values.OpenServiceMesh.osmcontroller.resource.limits.cpu}}"
+              memory: "{{.Values.OpenServiceMesh.osmcontroller.resource.limits.memory}}"
             requests:
-              cpu: 0.5
-              memory: 32M
+              cpu: "{{.Values.OpenServiceMesh.osmcontroller.resource.requests.cpu}}"
+              memory: "{{.Values.OpenServiceMesh.osmcontroller.resource.requests.memory}}"
           readinessProbe:
             initialDelaySeconds: 1
             timeoutSeconds: 5

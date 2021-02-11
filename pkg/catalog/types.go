@@ -5,12 +5,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	target "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha2"
-	spec "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/specs/v1alpha3"
+	access "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha3"
+	spec "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/specs/v1alpha4"
 	split "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/split/v1alpha2"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/openservicemesh/osm/pkg/announcements"
 	"github.com/openservicemesh/osm/pkg/certificate"
 	"github.com/openservicemesh/osm/pkg/configurator"
 	"github.com/openservicemesh/osm/pkg/endpoint"
@@ -48,8 +47,11 @@ type MeshCatalog struct {
 	// lookups
 	kubeController k8s.Controller
 
-	// Maintain a mapping of pod UID to CN of the Envoy on that pod
+	// Maintain a mapping of pod UID to CN of the Envoy on the given pod
 	podUIDToCN sync.Map
+
+	// Maintain a mapping of pod UID to certificate SerialNumber of the Envoy on the given pod
+	podUIDToCertificateSerialNumber sync.Map
 }
 
 // MeshCataloger is the mechanism by which the Service Mesh controller discovers all Envoy proxies connected to the catalog.
@@ -62,6 +64,9 @@ type MeshCataloger interface {
 
 	// ListTrafficPoliciesForServiceAccount returns all inbound and outbound traffic policies related to the given service account
 	ListTrafficPoliciesForServiceAccount(service.K8sServiceAccount) ([]*trafficpolicy.InboundTrafficPolicy, []*trafficpolicy.OutboundTrafficPolicy, error)
+
+	// ListPoliciesForPermissiveMode returns all inbound and outbound traffic policies related to the given services
+	ListPoliciesForPermissiveMode(services []service.MeshService) ([]*trafficpolicy.InboundTrafficPolicy, []*trafficpolicy.OutboundTrafficPolicy, error)
 
 	// ListAllowedInboundServices lists the inbound services allowed to connect to the given service.
 	ListAllowedInboundServices(service.MeshService) ([]service.MeshService, error)
@@ -79,13 +84,13 @@ type MeshCataloger interface {
 	ListServiceAccountsForService(service.MeshService) ([]service.K8sServiceAccount, error)
 
 	// ListSMIPolicies lists SMI policies.
-	ListSMIPolicies() ([]*split.TrafficSplit, []service.WeightedService, []service.K8sServiceAccount, []*spec.HTTPRouteGroup, []*target.TrafficTarget)
+	ListSMIPolicies() ([]*split.TrafficSplit, []service.WeightedService, []service.K8sServiceAccount, []*spec.HTTPRouteGroup, []*access.TrafficTarget)
 
 	// ListEndpointsForService returns the list of individual instance endpoint backing a service
 	ListEndpointsForService(service.MeshService) ([]endpoint.Endpoint, error)
 
 	// GetResolvableServiceEndpoints returns the resolvable set of endpoint over which a service is accessible using its FQDN.
-	// These are the endpoint destinations we'd expect client applications sends the traffic towards to, when attemtpting to
+	// These are the endpoint destinations we'd expect client applications sends the traffic towards to, when attempting to
 	// reach a specific service.
 	// If no LB/virtual IPs are assigned to the service, GetResolvableServiceEndpoints will return ListEndpointsForService
 	GetResolvableServiceEndpoints(service.MeshService) ([]endpoint.Endpoint, error)
@@ -106,29 +111,35 @@ type MeshCataloger interface {
 	GetServicesForServiceAccount(service.K8sServiceAccount) ([]service.MeshService, error)
 
 	// GetResolvableHostnamesForUpstreamService returns the hostnames over which an upstream service is accessible from a downstream service
+	// TODO : remove as a part of routes refactor (#2397)
 	GetResolvableHostnamesForUpstreamService(downstream, upstream service.MeshService) ([]string, error)
 
 	//GetWeightedClusterForService returns the weighted cluster for a service
 	GetWeightedClusterForService(service service.MeshService) (service.WeightedCluster, error)
 
 	// GetIngressRoutesPerHost returns the HTTP route matches per host associated with an ingress service
+	// TODO : remove as a part of routes refactor (#2397)
 	GetIngressRoutesPerHost(service.MeshService) (map[string][]trafficpolicy.HTTPRouteMatch, error)
+
+	// GetIngressPoliciesForService returns the inbound traffic policies associated with an ingress service
+	GetIngressPoliciesForService(service.MeshService, service.K8sServiceAccount) ([]*trafficpolicy.InboundTrafficPolicy, error)
 
 	// ListMonitoredNamespaces lists namespaces monitored by the control plane
 	ListMonitoredNamespaces() []string
 
-	// GetPortToProtocolMappingForService returns a mapping of the service's ports to their corresponding application protocol
+	// GetTargetPortToProtocolMappingForService returns a mapping of the service's ports to their corresponding application protocol.
+	// The ports returned are the actual ports on which the application exposes the service derived from the service's endpoints,
+	// ie. 'spec.ports[].targetPort' instead of 'spec.ports[].port' for a Kubernetes service.
+	GetTargetPortToProtocolMappingForService(service.MeshService) (map[uint32]string, error)
+
+	// GetTargetPortToProtocolMappingForService returns a mapping of the service's ports to their corresponding application protocol,
+	// where the ports returned are the ones used by downstream clients in their requests. This can be different from the ports
+	// actually exposed by the application binary, ie. 'spec.ports[].port' instead of 'spec.ports[].targetPort' for a Kubernetes service.
 	GetPortToProtocolMappingForService(service.MeshService) (map[uint32]string, error)
 
-	// ListInboundTrafficTargetsWithRoutes returns a list traffic target objects componsed of its routes for the given destination service account
+	// ListInboundTrafficTargetsWithRoutes returns a list traffic target objects composed of its routes for the given destination service account
 	ListInboundTrafficTargetsWithRoutes(service.K8sServiceAccount) ([]trafficpolicy.TrafficTargetWithRoutes, error)
 }
-
-type announcementChannel struct {
-	announcer string
-	channel   <-chan announcements.Announcement
-}
-
 type expectedProxy struct {
 	// The time the certificate, identified by CN, for the expected proxy was issued on
 	certificateIssuedAt time.Time

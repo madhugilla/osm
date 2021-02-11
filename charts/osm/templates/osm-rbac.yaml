@@ -13,7 +13,7 @@ rules:
     resources: ["jobs"]
     verbs: ["list", "get", "watch"]
   - apiGroups: [""]
-    resources: ["endpoints", "namespaces", "pods", "services", "secrets", "configmaps"]
+    resources: ["endpoints", "namespaces", "pods", "services", "secrets", "configmaps", "serviceaccounts"]
     verbs: ["list", "get", "watch"]
 
   # Port forwarding is needed for the OSM pod to be able to connect
@@ -30,7 +30,7 @@ rules:
     resources: ["secrets", "configmaps"]
     verbs: ["create", "update"]
   - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["mutatingwebhookconfigurations"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["split.smi-spec.io"]
     resources: ["trafficsplits"]

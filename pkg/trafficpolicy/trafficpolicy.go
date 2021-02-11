@@ -33,6 +33,16 @@ func NewOutboundTrafficPolicy(name string, hostnames []string) *OutboundTrafficP
 	}
 }
 
+// TotalClustersWeight returns total weight of the WeightedClusters in RouteWeightedClusters
+func (rwc *RouteWeightedClusters) TotalClustersWeight() int {
+	var totalWeight int
+	for clusterInterface := range rwc.WeightedClusters.Iter() { // iterate
+		cluster := clusterInterface.(service.WeightedCluster)
+		totalWeight += cluster.Weight
+	}
+	return totalWeight
+}
+
 // AddRule adds a Rule to an InboundTrafficPolicy based on the given HTTP route match, weighted cluster, and allowed service account
 //	parameters. If a Rule for the given HTTP route match exists, it will add the given service account to the Rule. If the the given route
 //	match is not already associated with a Rule, it will create a Rule for the given route and service account.
@@ -57,7 +67,6 @@ func (in *InboundTrafficPolicy) AddRule(route RouteWeightedClusters, allowedServ
 //	already exists, an error will be returned. If a Route with the given HTTP route match does not exist,
 //	a Route with the given HTTP route match and weighted clusters will be added to the Routes on the OutboundTrafficPolicy
 func (out *OutboundTrafficPolicy) AddRoute(httpRouteMatch HTTPRouteMatch, weightedClusters ...service.WeightedCluster) error {
-	routeExists := false
 	wc := set.NewSet()
 	for _, c := range weightedClusters {
 		wc.Add(c)
@@ -72,23 +81,33 @@ func (out *OutboundTrafficPolicy) AddRoute(httpRouteMatch HTTPRouteMatch, weight
 		}
 	}
 
-	if !routeExists {
-		out.Routes = append(out.Routes, &RouteWeightedClusters{
-			HTTPRouteMatch:   httpRouteMatch,
-			WeightedClusters: wc,
-		})
-	}
+	out.Routes = append(out.Routes, &RouteWeightedClusters{
+		HTTPRouteMatch:   httpRouteMatch,
+		WeightedClusters: wc,
+	})
 	return nil
 }
 
 // MergeInboundPolicies merges latest InboundTrafficPolicies into a slice of InboundTrafficPolicies that already exists (original)
-func MergeInboundPolicies(original []*InboundTrafficPolicy, latest ...*InboundTrafficPolicy) []*InboundTrafficPolicy {
+// allowPartialHostnamesMatch is set to true when we intend to merge ingress policies with traffic policies
+func MergeInboundPolicies(allowPartialHostnamesMatch bool, original []*InboundTrafficPolicy, latest ...*InboundTrafficPolicy) []*InboundTrafficPolicy {
 	for _, l := range latest {
 		foundHostnames := false
 		for _, or := range original {
-			if reflect.DeepEqual(or.Hostnames, l.Hostnames) {
-				foundHostnames = true
-				or.Rules = mergeRules(or.Rules, l.Rules)
+			if !allowPartialHostnamesMatch {
+				// For an traffic target inbound policy the hostnames list should fully intersect
+				// to merge the rules
+				if reflect.DeepEqual(or.Hostnames, l.Hostnames) {
+					foundHostnames = true
+					or.Rules = mergeRules(or.Rules, l.Rules)
+				}
+			} else {
+				// When an inbound traffic policy is being merged with an ingress traffic policy the hostnames is not the entire comprehensive list of kubernetes service names
+				// and will just be a subset to merge the rules
+				if subset(or.Hostnames, l.Hostnames) {
+					foundHostnames = true
+					or.Rules = mergeRules(or.Rules, l.Rules)
+				}
 			}
 		}
 		if !foundHostnames {
@@ -157,4 +176,20 @@ func mergeRoutesWeightedClusters(originalRoutes, latestRoutes []*RouteWeightedCl
 		}
 	}
 	return originalRoutes, mergeErrors
+}
+
+// subset returns true if the second array is completely contained in the first array
+func subset(first, second []string) bool {
+	set := make(map[string]bool)
+	for _, value := range first {
+		set[value] = true
+	}
+
+	for _, value := range second {
+		if _, found := set[value]; !found {
+			return false
+		}
+	}
+
+	return true
 }

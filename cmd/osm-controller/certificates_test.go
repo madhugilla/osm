@@ -13,11 +13,22 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/openservicemesh/osm/pkg/certificate/pem"
+	"github.com/openservicemesh/osm/pkg/certificate/providers"
 	"github.com/openservicemesh/osm/pkg/certificate/providers/tresor"
 	"github.com/openservicemesh/osm/pkg/constants"
+	"github.com/openservicemesh/osm/pkg/tests"
 )
 
 var _ = Describe("Test CMD tools", func() {
+	certPEM, err := tests.GetPEMCert()
+	It("should have resulted in no errors", func() {
+		Expect(err).ToNot(HaveOccurred())
+	})
+
+	keyPEM, err := tests.GetPEMPrivateKey()
+	It("should have resulted in no errors", func() {
+		Expect(err).ToNot(HaveOccurred())
+	})
 
 	Context("Testing getCertFromKubernetes", func() {
 		It("obtained root cert from k8s", func() {
@@ -26,8 +37,9 @@ var _ = Describe("Test CMD tools", func() {
 			ns := uuid.New().String()
 			secretName := uuid.New().String()
 
-			certPEM := []byte(uuid.New().String())
-			keyPEM := []byte(uuid.New().String())
+			certProviderConfig := providers.NewCertificateProviderConfig(kubeClient, nil, nil, providers.Kind(certProviderKind), ns,
+				secretName, tresorOptions, vaultOptions, certManagerOptions)
+			Expect(err).ToNot(HaveOccurred())
 
 			secret := &corev1.Secret{
 				ObjectMeta: v1.ObjectMeta{
@@ -44,7 +56,7 @@ var _ = Describe("Test CMD tools", func() {
 			_, err := kubeClient.CoreV1().Secrets(ns).Create(context.Background(), secret, v1.CreateOptions{})
 			Expect(err).ToNot(HaveOccurred())
 
-			actual, err := getCertFromKubernetes(kubeClient, ns, secretName)
+			actual, err := certProviderConfig.GetCertFromKubernetes()
 			Expect(err).ToNot(HaveOccurred())
 
 			expectedCert := pem.Certificate(certPEM)
@@ -64,7 +76,11 @@ var _ = Describe("Test CMD tools", func() {
 			ns := uuid.New().String()
 			secretName := uuid.New().String()
 
-			rootCert, err := getCertFromKubernetes(kubeClient, ns, secretName)
+			certProviderConfig := providers.NewCertificateProviderConfig(kubeClient, nil, nil, providers.Kind(certProviderKind), ns,
+				secretName, tresorOptions, vaultOptions, certManagerOptions)
+			Expect(err).ToNot(HaveOccurred())
+
+			rootCert, err := certProviderConfig.GetCertFromKubernetes()
 			Expect(err).ToNot(HaveOccurred())
 			Expect(rootCert).To(BeNil())
 		})
@@ -74,6 +90,10 @@ var _ = Describe("Test CMD tools", func() {
 
 			ns := uuid.New().String()
 			secretName := uuid.New().String()
+
+			certProviderConfig := providers.NewCertificateProviderConfig(kubeClient, nil, nil, providers.Kind(certProviderKind), ns,
+				secretName, tresorOptions, vaultOptions, certManagerOptions)
+			Expect(err).ToNot(HaveOccurred())
 
 			keyPEM := []byte(uuid.New().String())
 
@@ -91,7 +111,7 @@ var _ = Describe("Test CMD tools", func() {
 			_, err := kubeClient.CoreV1().Secrets(ns).Create(context.Background(), secret, v1.CreateOptions{})
 			Expect(err).ToNot(HaveOccurred())
 
-			rootCert, err := getCertFromKubernetes(kubeClient, ns, secretName)
+			rootCert, err := certProviderConfig.GetCertFromKubernetes()
 			Expect(err).To(HaveOccurred())
 			Expect(rootCert).To(BeNil())
 		})
@@ -102,7 +122,9 @@ var _ = Describe("Test CMD tools", func() {
 			ns := uuid.New().String()
 			secretName := uuid.New().String()
 
-			certPEM := []byte(uuid.New().String())
+			certProviderConfig := providers.NewCertificateProviderConfig(kubeClient, nil, nil, providers.Kind(certProviderKind), ns,
+				secretName, tresorOptions, vaultOptions, certManagerOptions)
+			Expect(err).ToNot(HaveOccurred())
 
 			secret := &corev1.Secret{
 				ObjectMeta: v1.ObjectMeta{
@@ -118,7 +140,7 @@ var _ = Describe("Test CMD tools", func() {
 			_, err := kubeClient.CoreV1().Secrets(ns).Create(context.Background(), secret, v1.CreateOptions{})
 			Expect(err).ToNot(HaveOccurred())
 
-			rootCert, err := getCertFromKubernetes(kubeClient, ns, secretName)
+			rootCert, err := certProviderConfig.GetCertFromKubernetes()
 			Expect(err).To(HaveOccurred())
 			Expect(rootCert).To(BeNil())
 		})
@@ -128,6 +150,10 @@ var _ = Describe("Test CMD tools", func() {
 
 			ns := uuid.New().String()
 			secretName := uuid.New().String()
+
+			certProviderConfig := providers.NewCertificateProviderConfig(kubeClient, nil, nil, providers.Kind(certProviderKind), ns,
+				secretName, tresorOptions, vaultOptions, certManagerOptions)
+			Expect(err).ToNot(HaveOccurred())
 
 			certPEM := []byte(uuid.New().String())
 			keyPEM := []byte(uuid.New().String())
@@ -146,7 +172,7 @@ var _ = Describe("Test CMD tools", func() {
 			_, err := kubeClient.CoreV1().Secrets(ns).Create(context.Background(), secret, v1.CreateOptions{})
 			Expect(err).ToNot(HaveOccurred())
 
-			rootCert, err := getCertFromKubernetes(kubeClient, ns, secretName)
+			rootCert, err := certProviderConfig.GetCertFromKubernetes()
 			Expect(err).To(HaveOccurred())
 			Expect(rootCert).To(BeNil())
 		})
@@ -158,9 +184,6 @@ var _ = Describe("Test CMD tools", func() {
 
 			ns := uuid.New().String()
 			secretName := uuid.New().String()
-
-			certPEM := []byte(uuid.New().String())
-			keyPEM := []byte(uuid.New().String())
 
 			expected := &corev1.Secret{
 				ObjectMeta: v1.ObjectMeta{
@@ -207,9 +230,6 @@ var _ = Describe("Test CMD tools", func() {
 					"123": []byte("456"),
 				},
 			})
-
-			certPEM := []byte(uuid.New().String())
-			keyPEM := []byte(uuid.New().String())
 
 			expected := &corev1.Secret{
 				ObjectMeta: v1.ObjectMeta{
