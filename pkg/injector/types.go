@@ -17,8 +17,8 @@ const (
 
 var log = logger.New("sidecar-injector")
 
-// webhook is the type used to represent the webhook for sidecar injection
-type webhook struct {
+// mutatingWebhook is the type used to represent the webhook for sidecar injection
+type mutatingWebhook struct {
 	config         Config
 	kubeClient     kubernetes.Interface
 	certManager    certificate.Manager
@@ -33,9 +33,6 @@ type webhook struct {
 
 // Config is the type used to represent the config options for the sidecar injection
 type Config struct {
-	// DefaultInjection defines whether sidecar injection is enabled by default
-	DefaultInjection bool
-
 	// ListenPort defines the port on which the sidecar injector listens
 	ListenPort int
 
@@ -63,4 +60,8 @@ type envoyBootstrapConfigMeta struct {
 	// Host and port of the Envoy xDS server
 	XDSHost string
 	XDSPort int
+
+	// The bootstrap Envoy config will be affected by the liveness, readiness, startup probes set on
+	// the pod this Envoy is fronting.
+	OriginalHealthProbes healthProbes
 }

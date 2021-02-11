@@ -13,7 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	fake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/openservicemesh/osm/pkg/announcements"
 	"github.com/openservicemesh/osm/pkg/configurator"
@@ -41,14 +41,13 @@ var _ = Describe("Test Kube Client Provider (w/o kubecontroller)", func() {
 	mockKubeController = k8s.NewMockController(mockCtrl)
 	mockConfigurator = configurator.NewMockConfigurator(mockCtrl)
 
-	stopChan := make(chan struct{})
 	providerID := "provider"
 
 	mockKubeController.EXPECT().IsMonitoredNamespace(tests.BookbuyerService.Namespace).Return(true).AnyTimes()
 
 	BeforeEach(func() {
 		fakeClientSet = fake.NewSimpleClientset()
-		provider, err = NewProvider(fakeClientSet, mockKubeController, stopChan, providerID, mockConfigurator)
+		provider, err = NewProvider(fakeClientSet, mockKubeController, providerID, mockConfigurator)
 		Expect(err).ToNot(HaveOccurred())
 	})
 
@@ -181,26 +180,52 @@ var _ = Describe("Test Kube Client Provider (w/o kubecontroller)", func() {
 					},
 					Ports: []v1.EndpointPort{
 						{
-							Name:        "port",
-							Port:        88,
+							Name:        "port1", // appProtocol specified
+							Port:        70,
 							Protocol:    v1.ProtocolTCP,
 							AppProtocol: &appProtoTCP,
 						},
 						{
-							Name:        "port",
+							Name:        "port2", // appProtocol specified
 							Port:        80,
 							Protocol:    v1.ProtocolTCP,
 							AppProtocol: &appProtoHTTP,
+						},
+						{
+							Name:     "http-port3", // appProtocol derived from port name
+							Port:     90,
+							Protocol: v1.ProtocolTCP,
+						},
+						{
+							Name:     "tcp-port4", // appProtocol derived from port name
+							Port:     100,
+							Protocol: v1.ProtocolTCP,
+						},
+						{
+							Name:     "grpc-port5", // appProtocol derived from port name
+							Port:     110,
+							Protocol: v1.ProtocolTCP,
+						},
+						{
+							Name:     "no-protocol-prefix", // appProtocol defaults to http
+							Port:     120,
+							Protocol: v1.ProtocolTCP,
+						},
+						{
+							Name:        "http-prefix",
+							Port:        130,
+							Protocol:    v1.ProtocolTCP,
+							AppProtocol: &appProtoTCP, // AppProtocol takes precedence over Name
 						},
 					},
 				},
 			},
 		}, nil)
 
-		portToProtocolMap, err := provider.GetPortToProtocolMappingForService(tests.BookbuyerService)
+		portToProtocolMap, err := provider.GetTargetPortToProtocolMappingForService(tests.BookbuyerService)
 		Expect(err).To(BeNil())
 
-		expectedPortToProtocolMap := map[uint32]string{88: appProtoTCP, 80: appProtoHTTP}
+		expectedPortToProtocolMap := map[uint32]string{70: "tcp", 80: "http", 90: "http", 100: "tcp", 110: "grpc", 120: "http", 130: "tcp"}
 		Expect(portToProtocolMap).To(Equal(expectedPortToProtocolMap))
 	})
 })
@@ -241,7 +266,7 @@ var _ = Describe("Test Kube Client Provider (/w kubecontroller)", func() {
 		}, 3*time.Second).Should(BeTrue())
 
 		Expect(err).ToNot(HaveOccurred())
-		provider, err = NewProvider(fakeClientSet, kubeController, stop, providerID, mockConfigurator)
+		provider, err = NewProvider(fakeClientSet, kubeController, providerID, mockConfigurator)
 		Expect(err).ToNot(HaveOccurred())
 	})
 

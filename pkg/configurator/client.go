@@ -50,6 +50,9 @@ const (
 
 	// serviceCertValidityDurationKey is the key name used to specify the validity duration of service certificates in the ConfigMap
 	serviceCertValidityDurationKey = "service_cert_validity_duration"
+
+	// outboundIPRangeExclusionListKey is the key name used to specify the ip ranges to exclude from outbound sidecar interception
+	outboundIPRangeExclusionListKey = "outbound_ip_range_exclusion_list"
 )
 
 // NewConfigurator implements configurator.Configurator and creates the Kubernetes client to manage namespaces.
@@ -69,7 +72,6 @@ func newConfigurator(kubeClient kubernetes.Interface, stop <-chan struct{}, osmN
 		informer:         informer,
 		cache:            informer.GetStore(),
 		cacheSynced:      make(chan interface{}),
-		announcements:    make(chan a.Announcement),
 		osmNamespace:     osmNamespace,
 		osmConfigMapName: osmConfigMapName,
 	}
@@ -81,7 +83,7 @@ func newConfigurator(kubeClient kubernetes.Interface, stop <-chan struct{}, osmN
 		Update: a.ConfigMapUpdated,
 		Delete: a.ConfigMapDeleted,
 	}
-	informer.AddEventHandler(k8s.GetKubernetesEventHandlers(informerName, providerName, client.announcements, nil, nil, eventTypes))
+	informer.AddEventHandler(k8s.GetKubernetesEventHandlers(informerName, providerName, nil, eventTypes))
 
 	// Start listener
 	go client.configMapListener()
@@ -114,8 +116,7 @@ func (c *Client) configMapListener() {
 
 			switch psubMsg.AnnouncementType {
 			case announcements.ConfigMapAdded:
-				// New config map added
-				log.Info().Msgf("[%s] added triggered a global proxy broadcast",
+				log.Debug().Msgf("[%s] OSM ConfigMap added event triggered a global proxy broadcast",
 					psubMsg.AnnouncementType)
 				events.GetPubSubInstance().Publish(events.PubSubMessage{
 					AnnouncementType: announcements.ScheduleProxyBroadcast,
@@ -125,7 +126,7 @@ func (c *Client) configMapListener() {
 
 			case announcements.ConfigMapDeleted:
 				// Ignore deletion. We expect config to be present
-				log.Info().Msgf("[%s] triggeing a global proxy broadcast",
+				log.Debug().Msgf("[%s] OSM ConfigMap deleted event triggered a global proxy broadcast",
 					psubMsg.AnnouncementType)
 				events.GetPubSubInstance().Publish(events.PubSubMessage{
 					AnnouncementType: announcements.ScheduleProxyBroadcast,
@@ -138,7 +139,7 @@ func (c *Client) configMapListener() {
 				prevConfigMapObj, okPrevCast := psubMsg.OldObj.(*v1.ConfigMap)
 				newConfigMapObj, okNewCast := psubMsg.NewObj.(*v1.ConfigMap)
 				if !okPrevCast || !okNewCast {
-					log.Error().Msgf("[%s]Error casting old/new ConfigMaps objects (%v %v)",
+					log.Error().Msgf("[%s] Error casting old/new ConfigMaps objects (%v %v)",
 						psubMsg.AnnouncementType, okPrevCast, okNewCast)
 					continue
 				}
@@ -159,7 +160,7 @@ func (c *Client) configMapListener() {
 				triggerGlobalBroadcast = triggerGlobalBroadcast || (prevConfigMap.TracingPort != newConfigMap.TracingPort)
 
 				if triggerGlobalBroadcast {
-					log.Info().Msgf("[%s] configmap update, triggering global proxy broadcast",
+					log.Debug().Msgf("[%s] OSM ConfigMap update triggered global proxy broadcast",
 						psubMsg.AnnouncementType)
 					events.GetPubSubInstance().Publish(events.PubSubMessage{
 						AnnouncementType: announcements.ScheduleProxyBroadcast,
@@ -215,12 +216,15 @@ type osmConfig struct {
 	// It is represented as a sequence of decimal numbers each with optional fraction and a unit suffix.
 	// Ex: 1h to represent 1 hour, 30m to represent 30 minutes, 1.5h or 1h30m to represent 1 hour and 30 minutes.
 	ServiceCertValidityDuration string `yaml:"service_cert_validity_duration"`
+
+	// OutboundIPRangeExclusionList is the list of outbound IP ranges to exclude from sidecar interception
+	OutboundIPRangeExclusionList string `yaml:"outbound_ip_range_exclusion_list"`
 }
 
 func (c *Client) run(stop <-chan struct{}) {
 	go c.informer.Run(stop) // run the informer synchronization
-	log.Info().Msgf("Started OSM ConfigMap informer - watching for %s", c.getConfigMapCacheKey())
-	log.Info().Msg("[ConfigMap Client] Waiting for ConfigMap informer's cache to sync")
+	log.Debug().Msgf("Started OSM ConfigMap informer - watching for %s", c.getConfigMapCacheKey())
+	log.Debug().Msg("[ConfigMap Client] Waiting for ConfigMap informer's cache to sync")
 	if !cache.WaitForCacheSync(stop, c.informer.HasSynced) {
 		log.Error().Msg("Failed initial cache sync for ConfigMap informer")
 		return
@@ -228,7 +232,7 @@ func (c *Client) run(stop <-chan struct{}) {
 
 	// Closing the cacheSynced channel signals to the rest of the system that caches have been synced.
 	close(c.cacheSynced)
-	log.Info().Msg("[ConfigMap Client] Cache sync for ConfigMap informer finished")
+	log.Debug().Msg("[ConfigMap Client] Cache sync for ConfigMap informer finished")
 }
 
 func (c *Client) getConfigMapCacheKey() string {
@@ -266,6 +270,7 @@ func parseOSMConfigMap(configMap *v1.ConfigMap) *osmConfig {
 	osmConfigMap.TracingEnable, _ = GetBoolValueForKey(configMap, tracingEnableKey)
 	osmConfigMap.EnvoyLogLevel, _ = GetStringValueForKey(configMap, envoyLogLevel)
 	osmConfigMap.ServiceCertValidityDuration, _ = GetStringValueForKey(configMap, serviceCertValidityDurationKey)
+	osmConfigMap.OutboundIPRangeExclusionList, _ = GetStringValueForKey(configMap, outboundIPRangeExclusionListKey)
 
 	if osmConfigMap.TracingEnable {
 		osmConfigMap.TracingAddress, _ = GetStringValueForKey(configMap, tracingAddressKey)

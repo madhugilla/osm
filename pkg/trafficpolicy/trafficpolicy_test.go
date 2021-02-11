@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	set "github.com/deckarep/golang-set"
-	"github.com/stretchr/testify/assert"
+	tassert "github.com/stretchr/testify/assert"
 
 	"github.com/openservicemesh/osm/pkg/service"
 )
@@ -57,7 +57,7 @@ var (
 )
 
 func TestAddRule(t *testing.T) {
-	assert := assert.New(t)
+	assert := tassert.New(t)
 
 	testCases := []struct {
 		name                  string
@@ -124,7 +124,7 @@ func TestAddRule(t *testing.T) {
 }
 
 func TestAddRoute(t *testing.T) {
-	assert := assert.New(t)
+	assert := tassert.New(t)
 
 	testCases := []struct {
 		name                  string
@@ -244,7 +244,7 @@ func TestAddRoute(t *testing.T) {
 }
 
 func TestMergeInboundPolicies(t *testing.T) {
-	assert := assert.New(t)
+	assert := tassert.New(t)
 
 	testRule1 := Rule{
 		Route:                  testRoute,
@@ -310,13 +310,138 @@ func TestMergeInboundPolicies(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := MergeInboundPolicies(tc.originalInbound, tc.newInbound...)
+			actual := MergeInboundPolicies(false, tc.originalInbound, tc.newInbound...)
 			assert.ElementsMatch(tc.expectedInbound, actual)
 		})
 	}
 }
+
+func TestMergeInboundPoliciesWithIngress(t *testing.T) {
+	assert := tassert.New(t)
+
+	testRule1 := Rule{
+		Route:                  testRoute,
+		AllowedServiceAccounts: set.NewSet(testServiceAccount1),
+	}
+	testRule2 := Rule{
+		Route:                  testRoute2,
+		AllowedServiceAccounts: set.NewSet(testServiceAccount2),
+	}
+	testRule1Modified := Rule{
+		Route: RouteWeightedClusters{
+			HTTPRouteMatch: HTTPRouteMatch{
+				PathRegex: "/hello",
+				Methods:   []string{"*"},
+			},
+			WeightedClusters: set.NewSet(testWeightedCluster),
+		},
+	}
+	testCases := []struct {
+		name              string
+		originalInbound   []*InboundTrafficPolicy
+		newIngressInbound []*InboundTrafficPolicy
+		expectedInbound   []*InboundTrafficPolicy
+	}{
+		{
+			name: "hostnames match",
+			originalInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: testHostnames,
+					Rules:     []*Rule{&testRule1, &testRule2},
+				},
+			},
+			newIngressInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: testHostnames,
+					Rules:     []*Rule{&testRule2},
+				},
+			},
+			expectedInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: testHostnames,
+					Rules:     []*Rule{&testRule1, &testRule2},
+				},
+			},
+		},
+		{
+			name: "hostnames do not match",
+			originalInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: testHostnames,
+					Rules:     []*Rule{&testRule1, &testRule2},
+				},
+			},
+			newIngressInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: testHostnames2,
+					Rules:     []*Rule{&testRule2},
+				},
+			},
+			expectedInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: testHostnames2,
+					Rules:     []*Rule{&testRule2},
+				},
+				{
+					Hostnames: testHostnames,
+					Rules:     []*Rule{&testRule1, &testRule2},
+				},
+			},
+		},
+		{
+			name: "hostnames in ingress is a subset",
+			originalInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: testHostnames,
+					Rules:     []*Rule{&testRule1, &testRule2},
+				},
+			},
+			newIngressInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: []string{"testHostname1"},
+					Rules:     []*Rule{&testRule2},
+				},
+			},
+			expectedInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: testHostnames,
+					Rules:     []*Rule{&testRule1, &testRule2},
+				},
+			},
+		},
+		{
+			name: "hostnames in ingress is a subset but rules differ",
+			originalInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: testHostnames,
+					Rules:     []*Rule{&testRule1, &testRule2},
+				},
+			},
+			newIngressInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: []string{"testHostname1"},
+					Rules:     []*Rule{&testRule1Modified},
+				},
+			},
+			expectedInbound: []*InboundTrafficPolicy{
+				{
+					Hostnames: testHostnames,
+					Rules:     []*Rule{&testRule1, &testRule2, &testRule1Modified},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := MergeInboundPolicies(true, tc.originalInbound, tc.newIngressInbound...)
+			assert.ElementsMatch(tc.expectedInbound, actual)
+		})
+	}
+}
+
 func TestMergeRules(t *testing.T) {
-	assert := assert.New(t)
+	assert := tassert.New(t)
 
 	testCases := []struct {
 		name          string
@@ -402,7 +527,7 @@ func TestMergeRules(t *testing.T) {
 }
 
 func TestMergeOutboundPolicies(t *testing.T) {
-	assert := assert.New(t)
+	assert := tassert.New(t)
 
 	testCases := []struct {
 		name                                               string
@@ -515,7 +640,7 @@ func TestMergeOutboundPolicies(t *testing.T) {
 }
 
 func TestMergeRouteWeightedClusters(t *testing.T) {
-	assert := assert.New(t)
+	assert := tassert.New(t)
 
 	testCases := []struct {
 		name                                         string
@@ -556,7 +681,7 @@ func TestMergeRouteWeightedClusters(t *testing.T) {
 	}
 }
 func TestNewInboundTrafficPolicy(t *testing.T) {
-	assert := assert.New(t)
+	assert := tassert.New(t)
 
 	name := "name"
 	hostnames := []string{"hostname1", "hostname2"}
@@ -567,7 +692,7 @@ func TestNewInboundTrafficPolicy(t *testing.T) {
 }
 
 func TestNewRouteWeightedCluster(t *testing.T) {
-	assert := assert.New(t)
+	assert := tassert.New(t)
 	expected := &RouteWeightedClusters{HTTPRouteMatch: testHTTPRouteMatch, WeightedClusters: set.NewSet(testWeightedCluster)}
 
 	actual := NewRouteWeightedCluster(testHTTPRouteMatch, testWeightedCluster)
@@ -575,7 +700,7 @@ func TestNewRouteWeightedCluster(t *testing.T) {
 }
 
 func TestNewOutboundPolicy(t *testing.T) {
-	assert := assert.New(t)
+	assert := tassert.New(t)
 
 	name := "name"
 	hostnames := []string{"hostname1", "hostname2"}
@@ -583,6 +708,37 @@ func TestNewOutboundPolicy(t *testing.T) {
 
 	actual := NewOutboundTrafficPolicy(name, hostnames)
 	assert.Equal(expected, actual)
+}
+
+func TestTotalClustersWeight(t *testing.T) {
+	assert := tassert.New(t)
+
+	testCases := []struct {
+		name           string
+		route          RouteWeightedClusters
+		expectedWeight int
+	}{
+		{
+			name:           "route with single cluster",
+			route:          testRoute,
+			expectedWeight: 100,
+		},
+		{
+			name: "route with multiple clusters",
+			route: RouteWeightedClusters{
+				HTTPRouteMatch:   testHTTPRouteMatch2,
+				WeightedClusters: set.NewSetFromSlice([]interface{}{testWeightedCluster, testWeightedCluster2}),
+			},
+			expectedWeight: 200,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := tc.route.TotalClustersWeight()
+			assert.Equal(tc.expectedWeight, actual)
+		})
+	}
 }
 
 func newTestInboundPolicy(name string, rules []*Rule) *InboundTrafficPolicy {
@@ -599,4 +755,27 @@ func newTestOutboundPolicy(name string, routes []*RouteWeightedClusters) *Outbou
 		Hostnames: testHostnames,
 		Routes:    routes,
 	}
+}
+
+func TestSubset(t *testing.T) {
+	first := []string{"bookstore.bookstore",
+		"bookstore.bookstore.svc.cluster.local",
+		"bookstore:80",
+		"bookstore.bookstore.svc:80",
+		"bookstore.bookstore.svc.cluster.local:80",
+		"bookstore",
+		"bookstore.bookstore.svc",
+		"bookstore.bookstore.svc.cluster",
+		"bookstore.bookstore:80",
+		"bookstore.bookstore.svc.cluster:80",
+	}
+
+	second := []string{"bookstore.bookstore.svc.cluster.local"}
+	assert := tassert.New(t)
+	isSubset := subset(first, second)
+	assert.True(isSubset)
+
+	third := []string{"bookstore.bookstore.svc.cluster.local", "foo.com"}
+	isSubset = subset(first, third)
+	assert.False(isSubset)
 }

@@ -1,5 +1,5 @@
 kind: TrafficTarget
-apiVersion: access.smi-spec.io/v1alpha2
+apiVersion: access.smi-spec.io/v1alpha3
 metadata:
   name: bookstore-v1
   namespace: bookstore
@@ -22,7 +22,7 @@ spec:
     #name: bookthief
     #namespace: bookthief
 ---
-apiVersion: specs.smi-spec.io/v1alpha3
+apiVersion: specs.smi-spec.io/v1alpha4
 kind: HTTPRouteGroup
 metadata:
   name: bookstore-service-routes
@@ -37,9 +37,13 @@ spec:
     pathRegex: ".*a-book.*new"
     methods:
     - GET
+  - name: update-books-bought
+    pathRegex: /update-books-bought
+    methods:
+    - POST
 ---
 kind: TrafficTarget
-apiVersion: access.smi-spec.io/v1alpha2
+apiVersion: access.smi-spec.io/v1alpha3
 metadata:
   name: bookstore-v2
   namespace: bookstore
@@ -58,3 +62,7 @@ spec:
   - kind: ServiceAccount
     name: bookbuyer
     namespace: bookbuyer
+  #- kind: ServiceAccount
+    #name: bookthief
+    #namespace: bookthief
+---

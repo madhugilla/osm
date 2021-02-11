@@ -14,9 +14,9 @@ import (
 	service "github.com/openservicemesh/osm/pkg/service"
 	smi "github.com/openservicemesh/osm/pkg/smi"
 	trafficpolicy "github.com/openservicemesh/osm/pkg/trafficpolicy"
-	v1alpha2 "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha2"
-	v1alpha3 "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/specs/v1alpha3"
-	v1alpha20 "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/split/v1alpha2"
+	v1alpha3 "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha3"
+	v1alpha4 "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/specs/v1alpha4"
+	v1alpha2 "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/split/v1alpha2"
 )
 
 // MockMeshCataloger is a mock of MeshCataloger interface
@@ -69,6 +69,21 @@ func (mr *MockMeshCatalogerMockRecorder) GetIngressRoutesPerHost(arg0 interface{
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetIngressRoutesPerHost", reflect.TypeOf((*MockMeshCataloger)(nil).GetIngressRoutesPerHost), arg0)
 }
 
+// GetIngressPoliciesForService mocks base method
+func (m *MockMeshCataloger) GetIngressPoliciesForService(arg0 service.MeshService, arg1 service.K8sServiceAccount) ([]*trafficpolicy.InboundTrafficPolicy, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetIngressPoliciesForService", arg0, arg1)
+	ret0, _ := ret[0].([]*trafficpolicy.InboundTrafficPolicy)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetIngressPoliciesForService indicates an expected call of GetIngressPoliciesForService
+func (mr *MockMeshCatalogerMockRecorder) GetIngressPoliciesForService(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetIngressPoliciesForService", reflect.TypeOf((*MockMeshCataloger)(nil).GetIngressPoliciesForService), arg0, arg1)
+}
+
 // GetPortToProtocolMappingForService mocks base method
 func (m *MockMeshCataloger) GetPortToProtocolMappingForService(arg0 service.MeshService) (map[uint32]string, error) {
 	m.ctrl.T.Helper()
@@ -84,6 +99,7 @@ func (mr *MockMeshCatalogerMockRecorder) GetPortToProtocolMappingForService(arg0
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPortToProtocolMappingForService", reflect.TypeOf((*MockMeshCataloger)(nil).GetPortToProtocolMappingForService), arg0)
 }
 
+// TODO : remove as a part of routes refactor (#2397)
 // GetResolvableHostnamesForUpstreamService mocks base method
 func (m *MockMeshCataloger) GetResolvableHostnamesForUpstreamService(arg0, arg1 service.MeshService) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -93,6 +109,7 @@ func (m *MockMeshCataloger) GetResolvableHostnamesForUpstreamService(arg0, arg1 
 	return ret0, ret1
 }
 
+// TODO : remove as a part of routes refactor (#2397)
 // GetResolvableHostnamesForUpstreamService indicates an expected call of GetResolvableHostnamesForUpstreamService
 func (mr *MockMeshCatalogerMockRecorder) GetResolvableHostnamesForUpstreamService(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
@@ -156,6 +173,21 @@ func (m *MockMeshCataloger) GetServicesFromEnvoyCertificate(arg0 certificate.Com
 func (mr *MockMeshCatalogerMockRecorder) GetServicesFromEnvoyCertificate(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetServicesFromEnvoyCertificate", reflect.TypeOf((*MockMeshCataloger)(nil).GetServicesFromEnvoyCertificate), arg0)
+}
+
+// GetTargetPortToProtocolMappingForService mocks base method
+func (m *MockMeshCataloger) GetTargetPortToProtocolMappingForService(arg0 service.MeshService) (map[uint32]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTargetPortToProtocolMappingForService", arg0)
+	ret0, _ := ret[0].(map[uint32]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTargetPortToProtocolMappingForService indicates an expected call of GetTargetPortToProtocolMappingForService
+func (mr *MockMeshCatalogerMockRecorder) GetTargetPortToProtocolMappingForService(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTargetPortToProtocolMappingForService", reflect.TypeOf((*MockMeshCataloger)(nil).GetTargetPortToProtocolMappingForService), arg0)
 }
 
 // GetWeightedClusterForService mocks base method
@@ -277,14 +309,14 @@ func (mr *MockMeshCatalogerMockRecorder) ListMonitoredNamespaces() *gomock.Call 
 }
 
 // ListSMIPolicies mocks base method
-func (m *MockMeshCataloger) ListSMIPolicies() ([]*v1alpha20.TrafficSplit, []service.WeightedService, []service.K8sServiceAccount, []*v1alpha3.HTTPRouteGroup, []*v1alpha2.TrafficTarget) {
+func (m *MockMeshCataloger) ListSMIPolicies() ([]*v1alpha2.TrafficSplit, []service.WeightedService, []service.K8sServiceAccount, []*v1alpha4.HTTPRouteGroup, []*v1alpha3.TrafficTarget) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListSMIPolicies")
-	ret0, _ := ret[0].([]*v1alpha20.TrafficSplit)
+	ret0, _ := ret[0].([]*v1alpha2.TrafficSplit)
 	ret1, _ := ret[1].([]service.WeightedService)
 	ret2, _ := ret[2].([]service.K8sServiceAccount)
-	ret3, _ := ret[3].([]*v1alpha3.HTTPRouteGroup)
-	ret4, _ := ret[4].([]*v1alpha2.TrafficTarget)
+	ret3, _ := ret[3].([]*v1alpha4.HTTPRouteGroup)
+	ret4, _ := ret[4].([]*v1alpha3.TrafficTarget)
 	return ret0, ret1, ret2, ret3, ret4
 }
 
@@ -338,6 +370,22 @@ func (m *MockMeshCataloger) ListTrafficPoliciesForServiceAccount(arg0 service.K8
 func (mr *MockMeshCatalogerMockRecorder) ListTrafficPoliciesForServiceAccount(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTrafficPoliciesForServiceAccount", reflect.TypeOf((*MockMeshCataloger)(nil).ListTrafficPoliciesForServiceAccount), arg0)
+}
+
+// ListPoliciesForPermissiveMode mocks base method
+func (m *MockMeshCataloger) ListPoliciesForPermissiveMode(arg0 []service.MeshService) ([]*trafficpolicy.InboundTrafficPolicy, []*trafficpolicy.OutboundTrafficPolicy, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListPoliciesForPermissiveMode", arg0)
+	ret0, _ := ret[0].([]*trafficpolicy.InboundTrafficPolicy)
+	ret1, _ := ret[1].([]*trafficpolicy.OutboundTrafficPolicy)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListPoliciesForPermissiveMode indicates an expected call of ListPoliciesForPermissiveMode
+func (mr *MockMeshCatalogerMockRecorder) ListPoliciesForPermissiveMode(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPoliciesForPermissiveMode", reflect.TypeOf((*MockMeshCataloger)(nil).ListPoliciesForPermissiveMode), arg0)
 }
 
 // RegisterProxy mocks base method

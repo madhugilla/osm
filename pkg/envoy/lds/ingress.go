@@ -68,7 +68,7 @@ func newIngressHTTPFilterChain(cfg configurator.Configurator, svc service.MeshSe
 func (lb *listenerBuilder) getIngressFilterChains(svc service.MeshService) []*xds_listener.FilterChain {
 	var ingressFilterChains []*xds_listener.FilterChain
 
-	protocolToPortMap, err := lb.meshCatalog.GetPortToProtocolMappingForService(svc)
+	protocolToPortMap, err := lb.meshCatalog.GetTargetPortToProtocolMappingForService(svc)
 	if err != nil {
 		log.Error().Err(err).Msgf("Error retrieving port to protocol mapping for service %s", svc)
 		return ingressFilterChains
@@ -93,7 +93,8 @@ func (lb *listenerBuilder) getIngressFilterChains(svc service.MeshService) []*xd
 			ingressFilterChains = append(ingressFilterChains, ingressFilterChainWithoutSNI)
 
 		default:
-			log.Error().Msgf("Cannot build inbound filter chain, unsupported protocol %s for proxy:port %s:%d", appProtocol, svc, port)
+			log.Error().Msgf("Cannot build inbound filter chain. Protocol %s is not supported for service %s on port %d",
+				appProtocol, svc, port)
 		}
 	}
 

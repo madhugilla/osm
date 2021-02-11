@@ -46,7 +46,7 @@ var _ = Describe("Test all patch operations", func() {
 			_, err := client.CoreV1().Namespaces().Create(context.TODO(), testNamespace, metav1.CreateOptions{})
 			Expect(err).ToNot(HaveOccurred())
 
-			wh := &webhook{
+			wh := &mutatingWebhook{
 				kubeClient:          client,
 				kubeController:      mockNsController,
 				certManager:         tresor.NewFakeCertManager(mockConfigurator),
@@ -55,10 +55,10 @@ var _ = Describe("Test all patch operations", func() {
 				nonInjectNamespaces: mapset.NewSet(),
 			}
 
-			pod := tests.NewPodTestFixture(namespace, podName)
-			pod.Labels = nil
+			pod := tests.NewPodFixture(namespace, podName, tests.BookstoreServiceAccountName, nil)
 			pod.Annotations = nil
 			mockConfigurator.EXPECT().GetEnvoyLogLevel().Return("").Times(1)
+			mockConfigurator.EXPECT().GetOutboundIPRangeExclusionList().Return(nil).Times(1)
 
 			req := &v1beta1.AdmissionRequest{Namespace: namespace}
 			jsonPatches, err := wh.createPatch(&pod, req, proxyUUID)

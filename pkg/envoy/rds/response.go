@@ -12,33 +12,38 @@ import (
 	"github.com/openservicemesh/osm/pkg/configurator"
 	"github.com/openservicemesh/osm/pkg/envoy"
 	"github.com/openservicemesh/osm/pkg/envoy/route"
+	"github.com/openservicemesh/osm/pkg/featureflags"
 	"github.com/openservicemesh/osm/pkg/kubernetes"
 	"github.com/openservicemesh/osm/pkg/service"
 	"github.com/openservicemesh/osm/pkg/trafficpolicy"
 )
 
 // NewResponse creates a new Route Discovery Response.
-func NewResponse(catalog catalog.MeshCataloger, proxy *envoy.Proxy, _ *xds_discovery.DiscoveryRequest, _ configurator.Configurator, _ certificate.Manager) (*xds_discovery.DiscoveryResponse, error) {
-	svcList, err := catalog.GetServicesFromEnvoyCertificate(proxy.GetCommonName())
+func NewResponse(cataloger catalog.MeshCataloger, proxy *envoy.Proxy, discoveryRequest *xds_discovery.DiscoveryRequest, cfg configurator.Configurator, certManager certificate.Manager) (*xds_discovery.DiscoveryResponse, error) {
+	if featureflags.IsRoutesV2Enabled() {
+		return newResponse(cataloger, proxy, discoveryRequest, cfg, certManager)
+	}
+
+	svcList, err := cataloger.GetServicesFromEnvoyCertificate(proxy.GetCertificateCommonName())
 	if err != nil {
-		log.Error().Err(err).Msgf("Error looking up MeshService for Envoy with CN=%q", proxy.GetCommonName())
+		log.Error().Err(err).Msgf("Error looking up MeshService for Envoy with certificate SerialNumber=%s on Pod with UID=%s", proxy.GetCertificateSerialNumber(), proxy.GetPodUID())
 		return nil, err
 	}
 	// Github Issue #1575
 	proxyServiceName := svcList[0]
 
-	allTrafficPolicies, err := catalog.ListTrafficPolicies(proxyServiceName)
+	allTrafficPolicies, err := cataloger.ListTrafficPolicies(proxyServiceName)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed listing routes")
+		log.Error().Err(err).Msgf("Error listing routes for Envoy on Pod with UID=%s", proxy.GetPodUID())
 		return nil, err
 	}
-	log.Debug().Msgf("trafficPolicies: %+v", allTrafficPolicies)
+	log.Debug().Msgf("trafficPolicies for service %s : %+v", proxyServiceName.String(), allTrafficPolicies)
 
 	resp := &xds_discovery.DiscoveryResponse{
 		TypeUrl: string(envoy.TypeRDS),
 	}
 
-	allTrafficSplits, _, _, _, _ := catalog.ListSMIPolicies()
+	allTrafficSplits, _, _, _, _ := cataloger.ListSMIPolicies()
 	var routeConfiguration []*xds_route.RouteConfiguration
 	outboundRouteConfig := route.NewRouteConfigurationStub(route.OutboundRouteConfigName)
 	inboundRouteConfig := route.NewRouteConfigurationStub(route.InboundRouteConfigName)
@@ -49,21 +54,25 @@ func NewResponse(catalog catalog.MeshCataloger, proxy *envoy.Proxy, _ *xds_disco
 		isSourceService := trafficPolicy.Source.Equals(proxyServiceName)
 		isDestinationService := trafficPolicy.Destination.Equals(proxyServiceName)
 		svc := trafficPolicy.Destination
-		hostnames, err := catalog.GetResolvableHostnamesForUpstreamService(proxyServiceName, svc)
+		weightedCluster, err := cataloger.GetWeightedClusterForService(svc)
+		if err != nil {
+			log.Error().Err(err).Msgf("Failed listing weighted cluster for service %s", svc.String())
+			return nil, err
+		}
+
+		if weightedCluster.Weight <= 0 {
+			continue
+		}
+
+		hostnames, err := cataloger.GetResolvableHostnamesForUpstreamService(proxyServiceName, svc)
 		//filter out traffic split service, reference to pkg/catalog/xds_certificates.go:74
 		if isTrafficSplitService(svc, allTrafficSplits) {
 			continue
 		}
 		if err != nil {
-			log.Error().Err(err).Msg("Failed listing domains")
+			log.Error().Err(err).Msgf("Failed listing domains for service %s", svc.String())
 			return nil, err
 		}
-		weightedCluster, err := catalog.GetWeightedClusterForService(svc)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed listing clusters")
-			return nil, err
-		}
-
 		for _, hostname := range hostnames {
 			// All routes from a given source to destination are part of 1 traffic policy between the source and destination.
 			for _, httpRoute := range trafficPolicy.HTTPRouteMatches {
@@ -78,7 +87,7 @@ func NewResponse(catalog catalog.MeshCataloger, proxy *envoy.Proxy, _ *xds_disco
 		}
 	}
 
-	if err = updateRoutesForIngress(proxyServiceName, catalog, inboundAggregatedRoutesByHostnames); err != nil {
+	if err = updateRoutesForIngress(proxyServiceName, cataloger, inboundAggregatedRoutesByHostnames); err != nil {
 		return nil, err
 	}
 
@@ -90,7 +99,7 @@ func NewResponse(catalog catalog.MeshCataloger, proxy *envoy.Proxy, _ *xds_disco
 	for _, config := range routeConfiguration {
 		marshalledRouteConfig, err := ptypes.MarshalAny(config)
 		if err != nil {
-			log.Error().Err(err).Msgf("Failed to marshal route config for proxy")
+			log.Error().Err(err).Msgf("Failed to marshal route config for proxy %s", proxyServiceName)
 			return nil, err
 		}
 		resp.Resources = append(resp.Resources, marshalledRouteConfig)
@@ -99,8 +108,8 @@ func NewResponse(catalog catalog.MeshCataloger, proxy *envoy.Proxy, _ *xds_disco
 }
 
 func isTrafficSplitService(svc service.MeshService, allTrafficSplits []*split.TrafficSplit) bool {
-	for _, split := range allTrafficSplits {
-		if split.Namespace == svc.Namespace && split.Spec.Service == svc.Name {
+	for _, trafficSplit := range allTrafficSplits {
+		if trafficSplit.Namespace == svc.Namespace && trafficSplit.Spec.Service == svc.Name {
 			return true
 		}
 	}

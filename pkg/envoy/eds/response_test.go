@@ -41,13 +41,14 @@ var _ = Describe("Test EDS response", func() {
 
 			// The format of the CN matters
 			xdsCertificate := certificate.CommonName(fmt.Sprintf("%s.%s.%s.foo.bar", proxyUUID, proxyServiceAccountName, tests.Namespace))
-			proxy := envoy.NewProxy(xdsCertificate, nil)
+			certSerialNumber := certificate.SerialNumber("123456")
+			proxy := envoy.NewProxy(xdsCertificate, certSerialNumber, nil)
 
 			{
 				// Create a pod to match the CN
 				podName := fmt.Sprintf("pod-0-%s", uuid.New())
+				pod := tests.NewPodFixture(tests.Namespace, podName, proxyServiceAccountName, tests.PodLabels)
 
-				pod := tests.NewPodTestFixtureWithOptions(tests.Namespace, podName, proxyServiceAccountName)
 				pod.Labels[constants.EnvoyUniqueIDLabelName] = proxyUUID.String() // This is what links the Pod and the Certificate
 				_, err := kubeClient.CoreV1().Pods(tests.Namespace).Create(context.TODO(), &pod, metav1.CreateOptions{})
 				Expect(err).ToNot(HaveOccurred())
@@ -76,7 +77,8 @@ var _ = Describe("Test EDS response", func() {
 
 			// The format of the CN matters
 			xdsCertificate := certificate.CommonName(fmt.Sprintf("%s.%s.%s.foo.bar", proxyUUID, proxyServiceAccountName, tests.Namespace))
-			proxy := envoy.NewProxy(xdsCertificate, nil)
+			certSerialNumber := certificate.SerialNumber("123456")
+			proxy := envoy.NewProxy(xdsCertificate, certSerialNumber, nil)
 
 			// Don't create a pod/service for this proxy, this should result in an error when the
 			// service is being looked up based on the proxy's certificate

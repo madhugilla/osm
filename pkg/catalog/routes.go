@@ -7,7 +7,7 @@ import (
 
 	mapset "github.com/deckarep/golang-set"
 	"github.com/pkg/errors"
-	target "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha2"
+	access "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/openservicemesh/osm/pkg/constants"
@@ -29,15 +29,12 @@ var wildCardRouteMatch trafficpolicy.HTTPRouteMatch = trafficpolicy.HTTPRouteMat
 
 // ListTrafficPoliciesForServiceAccount returns all inbound and outbound traffic policies related to the given service account
 func (mc *MeshCatalog) ListTrafficPoliciesForServiceAccount(sa service.K8sServiceAccount) ([]*trafficpolicy.InboundTrafficPolicy, []*trafficpolicy.OutboundTrafficPolicy, error) {
-	// TODO handle permissive traffic mode (#2034)
-
 	inbound, outbound, err := mc.listPoliciesFromTrafficTargets(sa)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	//	TODO: handle traffic splits, merge policies from traffic splits into outbound policies (#705)
-	//	TODO: handle ingress, merge policies from ingress resources into inbound policies (#2034)
 	return inbound, outbound, nil
 }
 
@@ -106,7 +103,7 @@ func (mc *MeshCatalog) getAllowedDirectionalServices(svc service.MeshService, di
 		outbound: "Allowed outbound services from source %q: %+v",
 	}[directn]
 
-	log.Trace().Msgf(msg, svc, allowedServices)
+	log.Debug().Msgf(msg, svc, allowedServices)
 
 	return allowedServices, nil
 }
@@ -131,7 +128,7 @@ func (mc *MeshCatalog) ListAllowedOutboundServicesForIdentity(identity service.K
 					Namespace: t.Spec.Destination.Namespace,
 				})
 				if err != nil {
-					log.Error().Msgf("No Services found matching Service Account %s in Namespace %s", t.Spec.Destination.Name, t.Namespace)
+					log.Error().Err(err).Msgf("No Services found matching Service Account %s in Namespace %s", t.Spec.Destination.Name, t.Namespace)
 					break
 				}
 				for _, destService := range destServices {
@@ -151,7 +148,7 @@ func (mc *MeshCatalog) ListAllowedOutboundServicesForIdentity(identity service.K
 
 //GetWeightedClusterForService returns the weighted cluster for a given service
 func (mc *MeshCatalog) GetWeightedClusterForService(svc service.MeshService) (service.WeightedCluster, error) {
-	log.Trace().Msgf("Finding weighted cluster for service %s", svc)
+	log.Trace().Msgf("Looking for weighted cluster for service %s", svc)
 
 	if mc.configurator.IsPermissiveTrafficPolicyMode() {
 		return getDefaultWeightedClusterForService(svc), nil
@@ -172,14 +169,10 @@ func (mc *MeshCatalog) GetWeightedClusterForService(svc service.MeshService) (se
 	return getDefaultWeightedClusterForService(svc), nil
 }
 
-// hostnamesTostr returns a comma separated string of hostnames from the list
-func hostnamesTostr(hostnames []string) string {
-	return strings.Join(hostnames, ",")
-}
-
 // GetResolvableHostnamesForUpstreamService returns the hostnames over which an upstream service is accessible from a downstream service
 // The hostname is the FQDN for the service, and can include ports as well.
 // Ex. bookstore.default, bookstore.default:80, bookstore.default.svc, bookstore.default.svc:80 etc.
+// TODO : remove as a part of routes refactor (#2397)
 func (mc *MeshCatalog) GetResolvableHostnamesForUpstreamService(downstream, upstream service.MeshService) ([]string, error) {
 	sameNamespace := downstream.Namespace == upstream.Namespace
 	var svcHostnames []string
@@ -198,7 +191,7 @@ func (mc *MeshCatalog) GetResolvableHostnamesForUpstreamService(downstream, upst
 	servicesList := mc.meshSpec.ListTrafficSplitServices()
 	for _, activeService := range servicesList {
 		if activeService.Service == upstream {
-			log.Trace().Msgf("Getting hostnames for service %s", upstream)
+			log.Trace().Msgf("Getting hostnames for upstream service %s", upstream)
 			rootServiceName := kubernetes.GetServiceFromHostname(activeService.RootService)
 			rootMeshService := service.MeshService{
 				Namespace: upstream.Namespace,
@@ -307,7 +300,7 @@ func getTrafficPoliciesForService(mc *MeshCatalog, routePolicies map[trafficpoli
 	var matchedTrafficTargets []trafficpolicy.TrafficTarget
 
 	for _, trafficTargets := range mc.meshSpec.ListTrafficTargets() {
-		log.Debug().Msgf("Discovered TrafficTarget resource: %s/%s", trafficTargets.Namespace, trafficTargets.Name)
+		log.Trace().Msgf("Discovered TrafficTarget resource: %s/%s", trafficTargets.Namespace, trafficTargets.Name)
 		if !isValidTrafficTarget(trafficTargets) {
 			log.Error().Msgf("TrafficTarget %s/%s has no spec routes; Skipping...", trafficTargets.Namespace, trafficTargets.Name)
 			continue
@@ -388,7 +381,7 @@ func (mc *MeshCatalog) buildAllowAllTrafficPolicies(service service.MeshService)
 			trafficTargets = append(trafficTargets, allowTrafficTarget)
 		}
 	}
-	log.Trace().Msgf("all traffic policies: %v", trafficTargets)
+	log.Debug().Msgf("All traffic policies for service %s : %v", service.String(), trafficTargets)
 	return trafficTargets
 }
 
@@ -411,7 +404,7 @@ func getDefaultWeightedClusterForService(meshService service.MeshService) servic
 }
 
 // listTrafficTargetPermutations creates a list of TrafficTargets for each source and destination pair.
-func (mc *MeshCatalog) listTrafficTargetPermutations(trafficTarget target.TrafficTarget, src target.IdentityBindingSubject, dest target.IdentityBindingSubject) ([]trafficpolicy.TrafficTarget, error) {
+func (mc *MeshCatalog) listTrafficTargetPermutations(trafficTarget access.TrafficTarget, src access.IdentityBindingSubject, dest access.IdentityBindingSubject) ([]trafficpolicy.TrafficTarget, error) {
 	sourceServiceAccount := service.K8sServiceAccount{
 		Namespace: src.Namespace,
 		Name:      src.Name,
@@ -451,7 +444,7 @@ func (mc *MeshCatalog) listTrafficTargetPermutations(trafficTarget target.Traffi
 
 // routesFromRules takes a set of traffic target rules and the namespace of the traffic target and returns a list of
 //	http route matches (trafficpolicy.HTTPRouteMatch)
-func (mc *MeshCatalog) routesFromRules(rules []target.TrafficTargetRule, trafficTargetNamespace string) ([]trafficpolicy.HTTPRouteMatch, error) {
+func (mc *MeshCatalog) routesFromRules(rules []access.TrafficTargetRule, trafficTargetNamespace string) ([]trafficpolicy.HTTPRouteMatch, error) {
 	routes := []trafficpolicy.HTTPRouteMatch{}
 
 	specMatchRoute, err := mc.getHTTPPathsPerRoute() // returns map[traffic_spec_name]map[match_name]trafficpolicy.HTTPRoute
@@ -460,7 +453,7 @@ func (mc *MeshCatalog) routesFromRules(rules []target.TrafficTargetRule, traffic
 	}
 
 	if len(specMatchRoute) == 0 {
-		log.Debug().Msg("No elements in map[traffic_spec_name]map[match name]trafficpolicyHTTPRoute")
+		log.Trace().Msg("No elements in map[traffic_spec_name]map[match name]trafficpolicyHTTPRoute")
 		return routes, nil
 	}
 
@@ -479,47 +472,6 @@ func (mc *MeshCatalog) routesFromRules(rules []target.TrafficTargetRule, traffic
 	return routes, nil
 }
 
-// GetServicesForServiceAccounts returns a list of services corresponding to a list service accounts
-//	TODO: Consider merging this function and mc.GetServicesForServiceAccount in future (#2038)
-func (mc *MeshCatalog) GetServicesForServiceAccounts(saList []service.K8sServiceAccount) []service.MeshService {
-	serviceMap := map[service.MeshService]bool{}
-
-	for _, sa := range saList {
-		services, err := mc.GetServicesForServiceAccount(sa)
-		if err != nil {
-			log.Error().Msgf("Error getting services linked to Service Account %s: %v", sa, err)
-			continue
-		} else {
-			for _, s := range services {
-				serviceMap[s] = true
-			}
-		}
-	}
-
-	serviceList := []service.MeshService{}
-	for k := range serviceMap {
-		serviceList = append(serviceList, k)
-	}
-
-	return serviceList
-}
-
-// GetHostnamesForUpstreamService returns the hostnames over which an upstream service is accessible from a downstream service
-// The hostname is the FQDN for the service, and can include ports as well.
-// Ex. bookstore.default, bookstore.default:80, bookstore.default.svc, bookstore.default.svc:80 etc.
-// TODO: replace GetResolvableHostnamesForUpstreamService with this func once routes refactor is complete (#issue)
-func (mc *MeshCatalog) GetHostnamesForUpstreamService(downstream, upstream service.MeshService) ([]string, error) {
-	sameNamespace := downstream.Namespace == upstream.Namespace
-	// The hostnames for this service are the Kubernetes service DNS names
-	hostnames, err := mc.getServiceHostnames(upstream, sameNamespace)
-	if err != nil {
-		log.Error().Err(err).Msgf("Error getting service hostnames for upstream service %s", upstream)
-		return nil, err
-	}
-
-	return hostnames, nil
-}
-
 // listMeshServices returns all services in the mesh
 func (mc *MeshCatalog) listMeshServices() []service.MeshService {
 	services := []service.MeshService{}
@@ -529,7 +481,7 @@ func (mc *MeshCatalog) listMeshServices() []service.MeshService {
 	return services
 }
 
-func (mc *MeshCatalog) getDestinationServicesFromTrafficTarget(t *target.TrafficTarget) ([]service.MeshService, error) {
+func (mc *MeshCatalog) getDestinationServicesFromTrafficTarget(t *access.TrafficTarget) ([]service.MeshService, error) {
 	sa := service.K8sServiceAccount{
 		Name:      t.Spec.Destination.Name,
 		Namespace: t.Spec.Destination.Namespace,
@@ -541,20 +493,20 @@ func (mc *MeshCatalog) getDestinationServicesFromTrafficTarget(t *target.Traffic
 	return destServices, nil
 }
 
-func (mc *MeshCatalog) buildInboundPolicies(t *target.TrafficTarget) []*trafficpolicy.InboundTrafficPolicy {
+func (mc *MeshCatalog) buildInboundPolicies(t *access.TrafficTarget) []*trafficpolicy.InboundTrafficPolicy {
 	inboundPolicies := []*trafficpolicy.InboundTrafficPolicy{}
 
 	// fetch services running workloads with destination service account
 	destServices, err := mc.getDestinationServicesFromTrafficTarget(t)
 	if err != nil {
-		log.Error().Msgf("Error resolving destination from traffic target %s (%s): %v", t.Name, t.Namespace, err)
+		log.Error().Err(err).Msgf("Error resolving destination from traffic target %s (%s)", t.Name, t.Namespace)
 		return inboundPolicies
 	}
 
 	// fetch all routes referenced in traffic target
 	routeMatches, err := mc.routesFromRules(t.Spec.Rules, t.Namespace)
 	if err != nil {
-		log.Error().Msgf("Error finding route matches from TrafficTarget %s in namespace %s: %v", t.Name, t.Namespace, err)
+		log.Error().Err(err).Msgf("Error finding route matches from TrafficTarget %s in namespace %s", t.Name, t.Namespace)
 		return inboundPolicies
 	}
 
@@ -582,13 +534,68 @@ func (mc *MeshCatalog) buildInboundPolicies(t *target.TrafficTarget) []*trafficp
 	return inboundPolicies
 }
 
-func (mc *MeshCatalog) buildOutboundPolicies(source service.K8sServiceAccount, t *target.TrafficTarget) []*trafficpolicy.OutboundTrafficPolicy {
+func (mc *MeshCatalog) buildInboundPermissiveModePolicies(svc service.MeshService) []*trafficpolicy.InboundTrafficPolicy {
+	inboundPolicies := []*trafficpolicy.InboundTrafficPolicy{}
+
+	hostnames, err := mc.getServiceHostnames(svc, true)
+	if err != nil {
+		log.Error().Err(err).Msgf("Error getting service hostnames for service %s", svc)
+		return inboundPolicies
+	}
+
+	servicePolicy := trafficpolicy.NewInboundTrafficPolicy(buildPolicyName(svc, false), hostnames)
+	weightedCluster := getDefaultWeightedClusterForService(svc)
+	svcAccounts := mc.kubeController.ListServiceAccounts()
+
+	// Build a rule for every service account in the mesh
+	for _, svcAccount := range svcAccounts {
+		sa := utils.SvcAccountToK8sSvcAccount(svcAccount)
+		servicePolicy.AddRule(*trafficpolicy.NewRouteWeightedCluster(wildCardRouteMatch, weightedCluster), sa)
+	}
+
+	if len(servicePolicy.Rules) > 0 {
+		inboundPolicies = append(inboundPolicies, servicePolicy)
+	}
+	return inboundPolicies
+}
+
+func (mc *MeshCatalog) buildOutboundPermissiveModePolicies(srcServices []service.MeshService) []*trafficpolicy.OutboundTrafficPolicy {
+	outPolicies := []*trafficpolicy.OutboundTrafficPolicy{}
+
+	k8sServices := mc.kubeController.ListServices()
+	var destServices []service.MeshService
+	for _, k8sService := range k8sServices {
+		destServices = append(destServices, utils.K8sSvcToMeshSvc(k8sService))
+	}
+
+	// For permissive mode build an outbound policy to every service in the mesh except to itself
+	destServices = difference(destServices, srcServices)
+
+	for _, destService := range destServices {
+		hostnames, err := mc.getServiceHostnames(destService, false)
+		if err != nil {
+			log.Error().Err(err).Msgf("Error getting service hostnames for service %s", destService)
+			continue
+		}
+
+		weightedCluster := getDefaultWeightedClusterForService(destService)
+		policy := trafficpolicy.NewOutboundTrafficPolicy(buildPolicyName(destService, false), hostnames)
+		if err := policy.AddRoute(wildCardRouteMatch, weightedCluster); err != nil {
+			log.Error().Err(err).Msgf("Error adding route to outbound policy in permissive mode for destination %s(%s)", destService.Name, destService.Namespace)
+			continue
+		}
+		outPolicies = append(outPolicies, policy)
+	}
+	return outPolicies
+}
+
+func (mc *MeshCatalog) buildOutboundPolicies(source service.K8sServiceAccount, t *access.TrafficTarget) []*trafficpolicy.OutboundTrafficPolicy {
 	outPolicies := []*trafficpolicy.OutboundTrafficPolicy{}
 
 	// fetch services running workloads with destination service account
 	destServices, err := mc.getDestinationServicesFromTrafficTarget(t)
 	if err != nil {
-		log.Error().Msgf("Error resolving destination from traffic target %s (%s): %v", t.Name, t.Namespace, err)
+		log.Error().Err(err).Msgf("Error resolving destination from traffic target %s (%s)", t.Name, t.Namespace)
 		return outPolicies
 	}
 
@@ -613,7 +620,7 @@ func (mc *MeshCatalog) buildOutboundPolicies(source service.K8sServiceAccount, t
 }
 
 // listPoliciesFromTrafficTargets loops through all SMI Traffic Target resources and returns inbound and outbound traffic policies
-//		based on when the given service account matches a destination or source in the Traffic Target resource
+// based on when the given service account matches a destination or source in the Traffic Target resource
 func (mc *MeshCatalog) listPoliciesFromTrafficTargets(sa service.K8sServiceAccount) ([]*trafficpolicy.InboundTrafficPolicy, []*trafficpolicy.OutboundTrafficPolicy, error) {
 	inboundPolicies := []*trafficpolicy.InboundTrafficPolicy{}
 	outboundPolicies := []*trafficpolicy.OutboundTrafficPolicy{}
@@ -624,7 +631,7 @@ func (mc *MeshCatalog) listPoliciesFromTrafficTargets(sa service.K8sServiceAccou
 		}
 
 		if t.Spec.Destination.Name == sa.Name { // found inbound
-			inboundPolicies = trafficpolicy.MergeInboundPolicies(inboundPolicies, mc.buildInboundPolicies(t)...)
+			inboundPolicies = trafficpolicy.MergeInboundPolicies(false, inboundPolicies, mc.buildInboundPolicies(t)...)
 		}
 
 		for _, source := range t.Spec.Sources {
@@ -641,18 +648,52 @@ func (mc *MeshCatalog) listPoliciesFromTrafficTargets(sa service.K8sServiceAccou
 	return inboundPolicies, outboundPolicies, nil
 }
 
-func isValidTrafficTarget(t *target.TrafficTarget) bool {
-	if t.Spec.Rules == nil || len(t.Spec.Rules) == 0 {
-		return false
+// ListPoliciesForPermissiveMode builds inbound and outbound traffic policies from service discovery
+func (mc *MeshCatalog) ListPoliciesForPermissiveMode(services []service.MeshService) ([]*trafficpolicy.InboundTrafficPolicy, []*trafficpolicy.OutboundTrafficPolicy, error) {
+	inboundPolicies := []*trafficpolicy.InboundTrafficPolicy{}
+	outboundPolicies := []*trafficpolicy.OutboundTrafficPolicy{}
+
+	for _, svc := range services {
+		inboundPolicies = trafficpolicy.MergeInboundPolicies(false, inboundPolicies, mc.buildInboundPermissiveModePolicies(svc)...)
 	}
-	return true
+
+	mergedPolicies, mergeErrors := trafficpolicy.MergeOutboundPolicies(outboundPolicies, mc.buildOutboundPermissiveModePolicies(services)...)
+	outboundPolicies = mergedPolicies
+	for _, mergeError := range mergeErrors {
+		log.Error().Err(mergeError).Msgf("Error building permissive mode outbound policies for services %v", services)
+	}
+	return inboundPolicies, outboundPolicies, nil
+}
+
+func isValidTrafficTarget(t *access.TrafficTarget) bool {
+	return t.Spec.Rules != nil && len(t.Spec.Rules) > 0
 }
 
 // buildPolicyName creates a name for a policy associated with the given service
 func buildPolicyName(svc service.MeshService, sameNamespace bool) string {
 	name := svc.Name
 	if !sameNamespace {
-		return name + "-" + svc.Namespace
+		return name + "." + svc.Namespace
 	}
 	return name
+}
+
+// difference returns the elements from largerSlice that are not found in smallerSlice
+func difference(largerSlice, smallerSlice []service.MeshService) []service.MeshService {
+	mb := make(map[service.MeshService]bool, len(largerSlice))
+	for _, x := range largerSlice {
+		mb[x] = false
+	}
+	var diff []service.MeshService
+	for _, x := range smallerSlice {
+		if _, found := mb[x]; found {
+			mb[x] = true
+		}
+	}
+	for key, val := range mb {
+		if !val {
+			diff = append(diff, key)
+		}
+	}
+	return diff
 }

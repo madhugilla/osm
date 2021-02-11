@@ -1,22 +1,29 @@
 package tests
 
 import (
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 
-	target "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha2"
-	spec "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/specs/v1alpha3"
+	access "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha3"
+	spec "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/specs/v1alpha4"
 	"github.com/servicemeshinterface/smi-sdk-go/pkg/apis/split/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	backpressure "github.com/openservicemesh/osm/experimental/pkg/apis/policy/v1alpha1"
+	tresorPem "github.com/openservicemesh/osm/pkg/certificate/pem"
 	"github.com/openservicemesh/osm/pkg/constants"
 	"github.com/openservicemesh/osm/pkg/endpoint"
 	"github.com/openservicemesh/osm/pkg/service"
+	"github.com/openservicemesh/osm/pkg/tests/certificates"
 	"github.com/openservicemesh/osm/pkg/trafficpolicy"
 )
+
+// ErrDecodingPEMBlock is an error message emitted when a PEM block cannot be decoded
+var ErrDecodingPEMBlock = errors.New("failed to decode PEM block containing certificate")
 
 const (
 	// Namespace is the commonly used namespace.
@@ -278,27 +285,27 @@ var (
 	}
 
 	// TrafficTarget is a traffic target SMI object.
-	TrafficTarget = target.TrafficTarget{
+	TrafficTarget = access.TrafficTarget{
 		TypeMeta: v1.TypeMeta{
-			APIVersion: "access.smi-spec.io/v1alpha2",
+			APIVersion: "access.smi-spec.io/v1alpha3",
 			Kind:       "TrafficTarget",
 		},
 		ObjectMeta: v1.ObjectMeta{
 			Name:      TrafficTargetName,
 			Namespace: "default",
 		},
-		Spec: target.TrafficTargetSpec{
-			Destination: target.IdentityBindingSubject{
+		Spec: access.TrafficTargetSpec{
+			Destination: access.IdentityBindingSubject{
 				Kind:      "Name",
 				Name:      BookstoreServiceAccountName,
 				Namespace: "default",
 			},
-			Sources: []target.IdentityBindingSubject{{
+			Sources: []access.IdentityBindingSubject{{
 				Kind:      "Name",
 				Name:      BookbuyerServiceAccountName,
 				Namespace: "default",
 			}},
-			Rules: []target.TrafficTargetRule{{
+			Rules: []access.TrafficTargetRule{{
 				Kind:    "HTTPRouteGroup",
 				Name:    RouteGroupName,
 				Matches: []string{BuyBooksMatchName, SellBooksMatchName},
@@ -349,7 +356,7 @@ var (
 	// HTTPRouteGroup is the HTTP route group SMI object.
 	HTTPRouteGroup = spec.HTTPRouteGroup{
 		TypeMeta: v1.TypeMeta{
-			APIVersion: "specs.smi-spec.io/v1alpha2",
+			APIVersion: "specs.smi-spec.io/v1alpha4",
 			Kind:       "HTTPRouteGroup",
 		},
 		ObjectMeta: v1.ObjectMeta{
@@ -388,7 +395,7 @@ var (
 	// TCPRoute is a TCPRoute SMI resource
 	TCPRoute = spec.TCPRoute{
 		TypeMeta: v1.TypeMeta{
-			APIVersion: "specs.smi-spec.io/v1alpha2",
+			APIVersion: "specs.smi-spec.io/v1alpha4",
 			Kind:       "TCPRoute",
 		},
 		ObjectMeta: v1.ObjectMeta{
@@ -423,35 +430,27 @@ var (
 		ClusterName: "default/bookstore-apex",
 		Weight:      100,
 	}
+
+	// BookbuyerDefaultWeightedCluster is a weighted cluster for bookbuyer
+	BookbuyerDefaultWeightedCluster = service.WeightedCluster{
+		ClusterName: "default/bookbuyer",
+		Weight:      100,
+	}
+
+	// PodLabels is a map of the default labels on pods
+	PodLabels = map[string]string{
+		SelectorKey:                      SelectorValue,
+		constants.EnvoyUniqueIDLabelName: ProxyUUID,
+	}
 )
 
-// NewPodTestFixture creates a new Pod struct for testing.
-func NewPodTestFixture(namespace string, podName string) corev1.Pod {
+// NewPodFixture creates a new Pod struct for testing.
+func NewPodFixture(namespace string, podName string, serviceAccountName string, labels map[string]string) corev1.Pod {
 	return corev1.Pod{
 		ObjectMeta: v1.ObjectMeta{
 			Name:      podName,
 			Namespace: namespace,
-			Labels: map[string]string{
-				SelectorKey:                      SelectorValue,
-				constants.EnvoyUniqueIDLabelName: ProxyUUID,
-			},
-		},
-		Spec: corev1.PodSpec{
-			ServiceAccountName: BookstoreServiceAccountName,
-		},
-	}
-}
-
-// NewPodTestFixtureWithOptions creates a new Pod struct with options for testing.
-func NewPodTestFixtureWithOptions(namespace string, podName string, serviceAccountName string) corev1.Pod {
-	return corev1.Pod{
-		ObjectMeta: v1.ObjectMeta{
-			Name:      podName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				SelectorKey:                      SelectorValue,
-				constants.EnvoyUniqueIDLabelName: ProxyUUID,
-			},
+			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
 			ServiceAccountName: serviceAccountName,
@@ -481,6 +480,16 @@ func NewServiceFixture(serviceName, namespace string, selectors map[string]strin
 	}
 }
 
+// NewServiceAccountFixture creates a new Kubernetes service account
+func NewServiceAccountFixture(svcAccountName, namespace string) *corev1.ServiceAccount {
+	return &corev1.ServiceAccount{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      svcAccountName,
+			Namespace: namespace,
+		},
+	}
+}
+
 // NewMeshServiceFixture creates a new mesh service
 func NewMeshServiceFixture(serviceName, namespace string) service.MeshService {
 	return service.MeshService{
@@ -490,32 +499,52 @@ func NewMeshServiceFixture(serviceName, namespace string) service.MeshService {
 }
 
 // NewSMITrafficTarget creates a new SMI Traffic Target
-func NewSMITrafficTarget(sourceName, sourceNamespace, destName, destNamespace string) target.TrafficTarget {
-	return target.TrafficTarget{
+func NewSMITrafficTarget(sourceName, sourceNamespace, destName, destNamespace string) access.TrafficTarget {
+	return access.TrafficTarget{
 		TypeMeta: v1.TypeMeta{
-			APIVersion: "access.smi-spec.io/v1alpha2",
+			APIVersion: "access.smi-spec.io/v1alpha3",
 			Kind:       "TrafficTarget",
 		},
 		ObjectMeta: v1.ObjectMeta{
 			Name:      destName,
 			Namespace: destNamespace,
 		},
-		Spec: target.TrafficTargetSpec{
-			Destination: target.IdentityBindingSubject{
+		Spec: access.TrafficTargetSpec{
+			Destination: access.IdentityBindingSubject{
 				Kind:      "ServiceAccount",
 				Name:      destName,
 				Namespace: destNamespace,
 			},
-			Sources: []target.IdentityBindingSubject{{
+			Sources: []access.IdentityBindingSubject{{
 				Kind:      "ServiceAccount",
 				Name:      sourceName,
 				Namespace: sourceNamespace,
 			}},
-			Rules: []target.TrafficTargetRule{{
+			Rules: []access.TrafficTargetRule{{
 				Kind:    "HTTPRouteGroup",
 				Name:    RouteGroupName,
 				Matches: []string{BuyBooksMatchName, SellBooksMatchName},
 			}},
 		},
 	}
+}
+
+// GetPEMCert returns a TEST certificate used ONLY for testing
+func GetPEMCert() (tresorPem.Certificate, error) {
+	caBlock, _ := pem.Decode([]byte(certificates.SampleCertificatePEM))
+	if caBlock == nil || caBlock.Type != "CERTIFICATE" {
+		return nil, ErrDecodingPEMBlock
+	}
+
+	return pem.EncodeToMemory(caBlock), nil
+}
+
+// GetPEMPrivateKey returns a TEST private key used ONLY for testing
+func GetPEMPrivateKey() (tresorPem.PrivateKey, error) {
+	caKeyBlock, _ := pem.Decode([]byte(certificates.SamplePrivateKeyPEM))
+	if caKeyBlock == nil || caKeyBlock.Type != "PRIVATE KEY" {
+		return nil, ErrDecodingPEMBlock
+	}
+
+	return pem.EncodeToMemory(caKeyBlock), nil
 }
